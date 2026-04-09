@@ -49,6 +49,28 @@ uint32_t kos_reg_map[] = {
 #define VECTOR_REG_BASE        (DOUBLE_REG_BASE + DOUBLE_REG_COUNT)
 #define VECTOR_REG_COUNT       4
 
+static int32_t gdb_thread_for_regs = GDB_THREAD_ANY;
+static irq_context_t *regs_irq_ctx;
+
+void set_regs_thread(int tid) {
+    gdb_thread_for_regs = tid;
+}
+
+void setup_regs_context(void) {
+    irq_context_t *default_context = gdb_get_irq_context();
+
+    if(gdb_thread_for_regs == GDB_THREAD_ALL ||
+       gdb_thread_for_regs == GDB_THREAD_ANY) {
+        regs_irq_ctx = default_context;
+        return;
+    }
+
+    {
+        kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_regs);
+        regs_irq_ctx = target ? &target->context : default_context;
+    }
+}
+
 static uint64_t build_dr(uint32_t fr_low, uint32_t fr_high) {
     return ((uint64_t)fr_high << 32) | fr_low;
 }
@@ -66,12 +88,17 @@ static char *append_zero_reg_hex(char *out) {
 }
 
 static bool read_register_hex(char *out, int regnum) {
+    irq_context_t *context;
+
     if(regnum < 0)
         return false;
 
+    setup_regs_context();
+    context = regs_irq_ctx;
+
     if(regnum < BASE_REG_COUNT) {
         uint32_t *reg_ptr =
-            (uint32_t *)((uintptr_t)irq_ctx + kos_reg_map[regnum]);
+            (uint32_t *)((uintptr_t)context + kos_reg_map[regnum]);
         mem_to_hex((const char *)reg_ptr, out, sizeof(*reg_ptr));
         return true;
     }
@@ -94,7 +121,7 @@ static bool read_register_hex(char *out, int regnum) {
 
     if(regnum < DOUBLE_REG_COUNT) {
         int base = regnum * 2;
-        uint64_t dr = build_dr(irq_ctx->fr[base], irq_ctx->fr[base + 1]);
+        uint64_t dr = build_dr(context->fr[base], context->fr[base + 1]);
         mem_to_hex((const char *)&dr, out, sizeof(dr));
         return true;
     }
@@ -104,7 +131,7 @@ static bool read_register_hex(char *out, int regnum) {
     if(regnum < VECTOR_REG_COUNT) {
         int base = regnum * 4;
         uint32_t fv[4];
-        build_fv(fv, irq_ctx, base);
+        build_fv(fv, context, base);
         mem_to_hex((const char *)fv, out, sizeof(fv));
         return true;
     }
@@ -113,11 +140,16 @@ static bool read_register_hex(char *out, int regnum) {
 }
 
 static bool write_register_hex(int regnum, const char *in) {
+    irq_context_t *context;
+
     if(regnum < 0)
         return false;
 
+    setup_regs_context();
+    context = regs_irq_ctx;
+
     if(regnum < BASE_REG_COUNT) {
-        hex_to_mem(in, (char *)((uintptr_t)irq_ctx + kos_reg_map[regnum]), 4);
+        hex_to_mem(in, (char *)((uintptr_t)context + kos_reg_map[regnum]), 4);
         return true;
     }
 
@@ -138,8 +170,8 @@ static bool write_register_hex(int regnum, const char *in) {
         uint64_t dr = 0;
 
         hex_to_mem(in, (char *)&dr, sizeof(dr));
-        irq_ctx->fr[base] = (uint32_t)(dr & 0xffffffffu);
-        irq_ctx->fr[base + 1] = (uint32_t)(dr >> 32);
+        context->fr[base] = (uint32_t)(dr & 0xffffffffu);
+        context->fr[base + 1] = (uint32_t)(dr >> 32);
         return true;
     }
 
@@ -151,7 +183,7 @@ static bool write_register_hex(int regnum, const char *in) {
 
         hex_to_mem(in, (char *)fv, sizeof(fv));
         for(int i = 0; i < 4; i++)
-            irq_ctx->fr[base + i] = fv[i];
+            context->fr[base + i] = fv[i];
         return true;
     }
 
@@ -195,8 +227,13 @@ void handle_read_regs(char *ptr) {
     (void)ptr;
 
     char *out = remcom_out_buffer;
+    irq_context_t *context;
+
+    setup_regs_context();
+    context = regs_irq_ctx;
+
     for(int i = 0; i < BASE_REG_COUNT; i++)
-        out = mem_to_hex((char *)((uint32_t)irq_ctx + kos_reg_map[i]), out, 4);
+        out = mem_to_hex((char *)((uint32_t)context + kos_reg_map[i]), out, 4);
 
     for(int i = 0; i < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT; i++)
         out = append_zero_reg_hex(out);
@@ -212,14 +249,18 @@ void handle_read_regs(char *ptr) {
 void handle_write_regs(char *ptr) {
     char *in = ptr;
     size_t remaining = strlen(in);
+    irq_context_t *context;
 
     if(remaining < (size_t)RAW_REG_COUNT * 8) {
         strcpy(remcom_out_buffer, "E01");
         return;
     }
 
+    setup_regs_context();
+    context = regs_irq_ctx;
+
     for(int i = 0; i < BASE_REG_COUNT; i++, in += 8)
-        hex_to_mem(in, (char *)((uint32_t)irq_ctx + kos_reg_map[i]), 4);
+        hex_to_mem(in, (char *)((uint32_t)context + kos_reg_map[i]), 4);
 
     in += (UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT) * 8;
 

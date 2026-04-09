@@ -48,6 +48,27 @@ typedef struct {
 
 static bool stepped;
 static step_data_t instr_buffer;
+static int32_t gdb_thread_for_ctrl = GDB_THREAD_ANY;
+static irq_context_t *ctrl_irq_ctx;
+
+void set_ctrl_thread(int tid) {
+    gdb_thread_for_ctrl = tid;
+}
+
+void setup_ctrl_context(void) {
+    irq_context_t *default_context = gdb_get_irq_context();
+
+    if(gdb_thread_for_ctrl == GDB_THREAD_ALL ||
+       gdb_thread_for_ctrl == GDB_THREAD_ANY) {
+        ctrl_irq_ctx = default_context;
+        return;
+    }
+
+    {
+        kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_ctrl);
+        ctrl_irq_ctx = target ? &target->context : default_context;
+    }
+}
 
 void do_single_step(void) {
     short *instr_mem;
@@ -56,12 +77,13 @@ void do_single_step(void) {
     unsigned short opcode, br_opcode;
 
     stepped = true;
-    instr_mem = (short *) irq_ctx->pc;
+    setup_ctrl_context();
+    instr_mem = (short *)ctrl_irq_ctx->pc;
     opcode = *instr_mem;
     br_opcode = opcode & COND_BR_MASK;
 
     if(br_opcode == BT_INSTR || br_opcode == BTS_INSTR) {
-        if(irq_ctx->sr & T_BIT_MASK) {
+        if(ctrl_irq_ctx->sr & T_BIT_MASK) {
             displacement = (opcode & COND_DISP) << 1;
 
             if(displacement & 0x80)
@@ -71,7 +93,7 @@ void do_single_step(void) {
                * Remember PC points to second instr.
                * after PC of branch ... so add 4
                */
-            instr_mem = (short *)(irq_ctx->pc + displacement + 4);
+            instr_mem = (short *)(ctrl_irq_ctx->pc + displacement + 4);
         }
         else {
             /* can't put a trapa in the delay slot of a bt/s instruction */
@@ -79,7 +101,7 @@ void do_single_step(void) {
         }
     }
     else if(br_opcode == BF_INSTR || br_opcode == BFS_INSTR) {
-        if(irq_ctx->sr & T_BIT_MASK) {
+        if(ctrl_irq_ctx->sr & T_BIT_MASK) {
             /* can't put a trapa in the delay slot of a bf/s instruction */
             instr_mem += (br_opcode == BFS_INSTR) ? 2 : 1;
         }
@@ -93,7 +115,7 @@ void do_single_step(void) {
                * Remember PC points to second instr.
                * after PC of branch ... so add 4
                */
-            instr_mem = (short *)(irq_ctx->pc + displacement + 4);
+            instr_mem = (short *)(ctrl_irq_ctx->pc + displacement + 4);
         }
     }
     else if((opcode & UCOND_DBR_MASK) == BRA_INSTR) {
@@ -106,17 +128,17 @@ void do_single_step(void) {
          * Remember PC points to second instr.
          * after PC of branch ... so add 4
          */
-        instr_mem = (short *)(irq_ctx->pc + displacement + 4);
+        instr_mem = (short *)(ctrl_irq_ctx->pc + displacement + 4);
     }
     else if((opcode & UCOND_RBR_MASK) == JSR_INSTR) {
         reg = (char)((opcode & UCOND_REG) >> 8);
 
-        instr_mem = (short *) irq_ctx->r[reg];
+        instr_mem = (short *)ctrl_irq_ctx->r[reg];
     }
     else if(opcode == RTS_INSTR)
-        instr_mem = (short *) irq_ctx->pr;
+        instr_mem = (short *)ctrl_irq_ctx->pr;
     else if(opcode == RTE_INSTR)
-        instr_mem = (short *) irq_ctx->r[15];
+        instr_mem = (short *)ctrl_irq_ctx->r[15];
     else if((opcode & TRAPA_MASK) == TRAPA_INSTR)
         instr_mem = (short *)((opcode & ~TRAPA_MASK) << 2);
     else
@@ -149,9 +171,42 @@ void handle_continue_step(char *ptr) {
     bool stepping = (ptr[-1] == 's');
     uint32_t addr;
 
+    setup_ctrl_context();
+
     if(hex_to_int(&ptr, &addr))
-        irq_ctx->pc = addr;
+        ctrl_irq_ctx->pc = addr;
 
     if(stepping)
         do_single_step();
+}
+
+void handle_thread_select(char *ptr) {
+    int tid = GDB_THREAD_ANY;
+    char type = *ptr++;
+    uint32_t parsed_tid = 0;
+
+    if(*ptr == '-' && ptr[1] == '1' && ptr[2] == '\0')
+        tid = GDB_THREAD_ALL;
+    else if(hex_to_int(&ptr, &parsed_tid) && *ptr == '\0')
+        tid = (int)parsed_tid;
+    else {
+        strcpy(remcom_out_buffer, "E01");
+        return;
+    }
+
+    if(tid > GDB_THREAD_ANY && !thd_by_tid((tid_t)tid)) {
+        strcpy(remcom_out_buffer, "E01");
+        return;
+    }
+
+    if(type == 'g')
+        set_regs_thread(tid);
+    else if(type == 'c')
+        set_ctrl_thread(tid);
+    else {
+        strcpy(remcom_out_buffer, "E01");
+        return;
+    }
+
+    strcpy(remcom_out_buffer, GDB_OK);
 }
