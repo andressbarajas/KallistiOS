@@ -10,11 +10,6 @@
 
 #include "gdb_internal.h"
 
-/*
- * Number of bytes for registers
- */
-#define NUM_REG_BYTES    41*4
-
 /* map from KOS register context order to GDB sh4 order */
 #define KOS_REG(r)      offsetof(irq_context_t, r)
 
@@ -37,6 +32,162 @@ uint32_t kos_reg_map[] = {
 #undef KOS_REG
 
 /*
+ * GDB's raw SH4 remote register block is 67 32-bit registers:
+ *  - 41 directly readable registers we map from irq_context_t
+ *  - 18 unavailable raw slots for ssr/spc and banked r0-r7 values
+ *  - 8 reserved blank raw slots
+ *
+ * Pseudo registers like dr0-dr14 and fv0-fv12 are not part of the g/G block.
+ */
+#define BASE_REG_COUNT         ((int)(sizeof(kos_reg_map) / sizeof(kos_reg_map[0])))
+#define UNAVAILABLE_REG_COUNT  18
+#define RESERVED_REG_COUNT     8
+#define RAW_REG_COUNT          (BASE_REG_COUNT + UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT)
+#define PSEUDO_ZERO_REGNUM     RAW_REG_COUNT
+#define DOUBLE_REG_BASE        (PSEUDO_ZERO_REGNUM + 1)
+#define DOUBLE_REG_COUNT       8
+#define VECTOR_REG_BASE        (DOUBLE_REG_BASE + DOUBLE_REG_COUNT)
+#define VECTOR_REG_COUNT       4
+
+static uint64_t build_dr(uint32_t fr_low, uint32_t fr_high) {
+    return ((uint64_t)fr_high << 32) | fr_low;
+}
+
+static void build_fv(uint32_t fv[4], const irq_context_t *context, int base) {
+    fv[0] = context->fr[base + 0];
+    fv[1] = context->fr[base + 1];
+    fv[2] = context->fr[base + 2];
+    fv[3] = context->fr[base + 3];
+}
+
+static char *append_zero_reg_hex(char *out) {
+    static const uint32_t zero;
+    return mem_to_hex((const char *)&zero, out, sizeof(zero));
+}
+
+static bool read_register_hex(char *out, int regnum) {
+    if(regnum < 0)
+        return false;
+
+    if(regnum < BASE_REG_COUNT) {
+        uint32_t *reg_ptr =
+            (uint32_t *)((uintptr_t)irq_ctx + kos_reg_map[regnum]);
+        mem_to_hex((const char *)reg_ptr, out, sizeof(*reg_ptr));
+        return true;
+    }
+
+    regnum -= BASE_REG_COUNT;
+
+    if(regnum < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT) {
+        append_zero_reg_hex(out);
+        return true;
+    }
+
+    regnum -= UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT;
+
+    if(regnum == 0) {
+        append_zero_reg_hex(out);
+        return true;
+    }
+
+    --regnum;
+
+    if(regnum < DOUBLE_REG_COUNT) {
+        int base = regnum * 2;
+        uint64_t dr = build_dr(irq_ctx->fr[base], irq_ctx->fr[base + 1]);
+        mem_to_hex((const char *)&dr, out, sizeof(dr));
+        return true;
+    }
+
+    regnum -= DOUBLE_REG_COUNT;
+
+    if(regnum < VECTOR_REG_COUNT) {
+        int base = regnum * 4;
+        uint32_t fv[4];
+        build_fv(fv, irq_ctx, base);
+        mem_to_hex((const char *)fv, out, sizeof(fv));
+        return true;
+    }
+
+    return false;
+}
+
+static bool write_register_hex(int regnum, const char *in) {
+    if(regnum < 0)
+        return false;
+
+    if(regnum < BASE_REG_COUNT) {
+        hex_to_mem(in, (char *)((uintptr_t)irq_ctx + kos_reg_map[regnum]), 4);
+        return true;
+    }
+
+    regnum -= BASE_REG_COUNT;
+
+    if(regnum < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT)
+        return true;
+
+    regnum -= UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT;
+
+    if(regnum == 0)
+        return true;
+
+    --regnum;
+
+    if(regnum < DOUBLE_REG_COUNT) {
+        int base = regnum * 2;
+        uint64_t dr = 0;
+
+        hex_to_mem(in, (char *)&dr, sizeof(dr));
+        irq_ctx->fr[base] = (uint32_t)(dr & 0xffffffffu);
+        irq_ctx->fr[base + 1] = (uint32_t)(dr >> 32);
+        return true;
+    }
+
+    regnum -= DOUBLE_REG_COUNT;
+
+    if(regnum < VECTOR_REG_COUNT) {
+        int base = regnum * 4;
+        uint32_t fv[4];
+
+        hex_to_mem(in, (char *)fv, sizeof(fv));
+        for(int i = 0; i < 4; i++)
+            irq_ctx->fr[base + i] = fv[i];
+        return true;
+    }
+
+    return false;
+}
+
+/*
+ * Handle the 'p' command.
+ * Returns the value of a single register.
+ */
+void handle_read_reg(char *ptr) {
+    uint32_t regnum = 0;
+
+    if(!hex_to_int(&ptr, &regnum) || *ptr != '\0' ||
+       !read_register_hex(remcom_out_buffer, (int)regnum)) {
+        strcpy(remcom_out_buffer, "E01");
+    }
+}
+
+/*
+ * Handle the 'P' command.
+ * Writes a single register in the form Pn...=r...
+ */
+void handle_write_reg(char *ptr) {
+    uint32_t regnum = 0;
+
+    if(!hex_to_int(&ptr, &regnum) || *ptr++ != '=' ||
+       !write_register_hex((int)regnum, ptr)) {
+        strcpy(remcom_out_buffer, "E01");
+        return;
+    }
+
+    strcpy(remcom_out_buffer, GDB_OK);
+}
+
+/*
  * Handle the 'g' command.
  * Returns the full set of general-purpose registers.
  */
@@ -44,8 +195,12 @@ void handle_read_regs(char *ptr) {
     (void)ptr;
 
     char *out = remcom_out_buffer;
-    for(int i = 0; i < NUM_REG_BYTES / 4; i++)
+    for(int i = 0; i < BASE_REG_COUNT; i++)
         out = mem_to_hex((char *)((uint32_t)irq_ctx + kos_reg_map[i]), out, 4);
+
+    for(int i = 0; i < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT; i++)
+        out = append_zero_reg_hex(out);
+
     *out = 0;
 }
 
@@ -56,7 +211,17 @@ void handle_read_regs(char *ptr) {
  */
 void handle_write_regs(char *ptr) {
     char *in = ptr;
-    for(int i = 0; i < NUM_REG_BYTES / 4; i++, in += 8)
+    size_t remaining = strlen(in);
+
+    if(remaining < (size_t)RAW_REG_COUNT * 8) {
+        strcpy(remcom_out_buffer, "E01");
+        return;
+    }
+
+    for(int i = 0; i < BASE_REG_COUNT; i++, in += 8)
         hex_to_mem(in, (char *)((uint32_t)irq_ctx + kos_reg_map[i]), 4);
+
+    in += (UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT) * 8;
+
     strcpy(remcom_out_buffer, GDB_OK);
 }
