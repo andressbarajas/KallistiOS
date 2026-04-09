@@ -253,6 +253,7 @@ void gdb_init(void) {
     irq_set_handler(EXC_USER_BREAK_PRE, handle_exception, NULL);
 
     irq_set_handler(IRQ_TRAP_CODE(32), handle_gdb_trapa, NULL);
+    irq_set_handler(IRQ_TRAP_CODE(63), handle_gdb_trapa, NULL);
     irq_set_handler(IRQ_TRAP_CODE(255), handle_user_trapa, NULL);
 
     gdb_breakpoint();
