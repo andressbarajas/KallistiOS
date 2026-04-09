@@ -102,7 +102,6 @@
                     targets.
     kill request    k
 
-    toggle debug    d       toggle debug flag (see 386 & 68k stubs)
     reset       r       reset -- see sparc stub.
     reserved    <other>     On other requests, the stub should
                     ignore the request and send an empty
@@ -140,7 +139,6 @@
 #include "gdb_internal.h"
 
 irq_context_t *irq_ctx;
-static int remote_debug;
 
 /*
     This function does all exception handling.  It only does two things -
@@ -161,9 +159,6 @@ static void gdb_handle_exception(int exception_vector) {
 
         switch(*ptr++) {
             case '?': handle_t_stop_reply(exception_vector); break;
-            case 'd':
-                remote_debug = !remote_debug;
-                break;
             case 'p': handle_read_reg(ptr); break;
             case 'P': handle_write_reg(ptr); break;
             case 'q': handle_query(ptr); break;
