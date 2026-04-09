@@ -20,6 +20,8 @@
 #define GDB_EINVAL     "E01"
 #define GDB_EUNIMPL    "E02"
 #define GDB_EBADCMD    "E03"
+#define GDB_EMEM_SIZE  "E34"
+#define GDB_EMEM_PROT  "E35"
 
 char highhex(int x);
 char lowhex(int x);
@@ -58,6 +60,8 @@ void handle_read_regs(char *ptr);
 void handle_write_regs(char *ptr);
 void handle_read_mem(char *ptr);
 void handle_write_mem(char *ptr);
+void handle_read_mem_binary(char *ptr);
+void handle_write_mem_binary(char *ptr);
 void handle_continue_step(char *ptr);
 void handle_breakpoint(char *ptr);
 void handle_query(char *ptr);
