@@ -219,6 +219,7 @@ static void gdb_handle_exception(int exception_vector) {
             case 'P': handle_write_reg(ptr); break;
             case 'q': handle_query(ptr); break;
             case 'T': handle_thread_alive(ptr); break;
+            case 'H': handle_thread_select(ptr); break;
             case 'g': handle_read_regs(ptr); break;
             case 'G': handle_write_regs(ptr); break;
             case 'm': handle_read_mem(ptr); break;
@@ -236,6 +237,10 @@ static void gdb_handle_exception(int exception_vector) {
 
         put_packet(remcom_out_buffer);
     }
+}
+
+irq_context_t *gdb_get_irq_context(void) {
+    return irq_ctx;
 }
 
 
