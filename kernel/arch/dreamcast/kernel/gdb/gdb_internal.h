@@ -22,6 +22,8 @@
 #define GDB_EBADCMD    "E03"
 #define GDB_EMEM_SIZE  "E34"
 #define GDB_EMEM_PROT  "E35"
+#define GDB_EBKPT_SW_NORES   "E57"
+#define GDB_EBKPT_CLEAR_ADDR "E56"
 
 char highhex(int x);
 char lowhex(int x);

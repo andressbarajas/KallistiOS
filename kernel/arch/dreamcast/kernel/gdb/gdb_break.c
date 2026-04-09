@@ -8,6 +8,8 @@
 
 */
 
+#include <arch/cache.h>
+
 #include "gdb_internal.h"
 
 /* Handle inserting/removing a hardware breakpoint.
@@ -19,6 +21,62 @@
 #define LREG(r, o) (*((uint32_t*)((r)+(o))))
 #define WREG(r, o) (*((uint16_t*)((r)+(o))))
 #define BREG(r, o) (*((uint8_t*)((r)+(o))))
+
+#define MAX_SW_BREAKPOINTS 32
+#define GDB_SW_BREAK_OPCODE 0xc33f
+
+typedef struct {
+    uint32_t addr;
+    uint16_t original;
+    bool active;
+} sw_breakpoint_t;
+
+static sw_breakpoint_t sw_breakpoints[MAX_SW_BREAKPOINTS];
+
+static void soft_breakpoint(bool set, uintptr_t addr, size_t length,
+                            char *res_buffer) {
+    if((addr & 1u) || length != 2u) {
+        gdb_error_with_code_str(GDB_EINVAL,
+                                "Z0: address must be 2-byte aligned");
+        return;
+    }
+
+    for(int i = 0; i < MAX_SW_BREAKPOINTS; ++i) {
+        if(sw_breakpoints[i].active && sw_breakpoints[i].addr == addr) {
+            if(set) {
+                strcpy(res_buffer, GDB_OK);
+            }
+            else {
+                *((uint16_t *)addr) = sw_breakpoints[i].original;
+                icache_flush_range(addr, 2);
+                sw_breakpoints[i].active = false;
+                strcpy(res_buffer, GDB_OK);
+            }
+
+            return;
+        }
+    }
+
+    if(!set) {
+        gdb_error_with_code_str(GDB_EBKPT_CLEAR_ADDR,
+                                "z0: no breakpoint at requested address");
+        return;
+    }
+
+    for(int i = 0; i < MAX_SW_BREAKPOINTS; ++i) {
+        if(!sw_breakpoints[i].active) {
+            sw_breakpoints[i].addr = addr;
+            sw_breakpoints[i].original = *((uint16_t *)addr);
+            sw_breakpoints[i].active = true;
+            *((uint16_t *)addr) = GDB_SW_BREAK_OPCODE;
+            icache_flush_range(addr, 2);
+            strcpy(res_buffer, GDB_OK);
+            return;
+        }
+    }
+
+    gdb_error_with_code_str(GDB_EBKPT_SW_NORES, "Z0: no free breakpoint slots");
+}
 
 static void hard_breakpoint(bool set, int brk_type, uintptr_t addr, size_t length, char* res_buffer) {
     char* const ucb_base = (char*)0xff200000;
@@ -104,8 +162,12 @@ void handle_breakpoint(char *ptr) {
 
     if(*ptr++ == ',' && hex_to_int(&ptr, &addr) &&
        *ptr++ == ',' && hex_to_int(&ptr, &length)) {
-        hard_breakpoint(set, brk_type, addr, length, remcom_out_buffer);
-    } else {
-        strcpy(remcom_out_buffer, "E02");
+        if(brk_type == 0)
+            soft_breakpoint(set, addr, length, remcom_out_buffer);
+        else
+            hard_breakpoint(set, brk_type, addr, length, remcom_out_buffer);
+    }
+    else {
+        gdb_error_with_code_str(GDB_EINVAL, "Z/z: invalid packet");
     }
 }
