@@ -51,6 +51,18 @@ static step_data_t instr_buffer;
 static int32_t gdb_thread_for_ctrl = GDB_THREAD_ANY;
 static irq_context_t *ctrl_irq_ctx;
 
+static void do_single_step(void);
+
+static void resume_target(bool stepping, bool set_pc, uint32_t pc) {
+    setup_ctrl_context();
+
+    if(set_pc)
+        ctrl_irq_ctx->pc = pc;
+
+    if(stepping)
+        do_single_step();
+}
+
 void set_ctrl_thread(int tid) {
     gdb_thread_for_ctrl = tid;
 }
@@ -70,7 +82,7 @@ void setup_ctrl_context(void) {
     }
 }
 
-void do_single_step(void) {
+static void do_single_step(void) {
     short *instr_mem;
     int displacement;
     int reg;
@@ -169,15 +181,42 @@ void undo_single_step(void) {
  */
 void handle_continue_step(char *ptr) {
     bool stepping = (ptr[-1] == 's');
-    uint32_t addr;
+    uint32_t addr = 0;
+    bool set_pc = hex_to_int(&ptr, &addr) != 0;
 
-    setup_ctrl_context();
+    resume_target(stepping, set_pc, addr);
+}
 
-    if(hex_to_int(&ptr, &addr))
-        ctrl_irq_ctx->pc = addr;
+bool handle_continue_step_signal(char *ptr) {
+    bool stepping = (ptr[-1] == 'S');
+    uint32_t signal = 0;
+    uint32_t addr = 0;
+    bool set_pc = false;
 
-    if(stepping)
-        do_single_step();
+    if(hex_to_int(&ptr, &signal) != 2) {
+        gdb_error_with_code_str(GDB_EINVAL, "C/S: invalid signal packet");
+        return false;
+    }
+
+    if(*ptr == ';') {
+        ++ptr;
+
+        if(!hex_to_int(&ptr, &addr) || *ptr != '\0') {
+            gdb_error_with_code_str(GDB_EINVAL, "C/S: invalid address packet");
+            return false;
+        }
+
+        set_pc = true;
+    }
+    else if(*ptr != '\0') {
+        gdb_error_with_code_str(GDB_EINVAL, "C/S: invalid packet");
+        return false;
+    }
+
+    /* SH4 does not use the supplied signal value here. */
+    (void)signal;
+    resume_target(stepping, set_pc, addr);
+    return true;
 }
 
 void handle_thread_select(char *ptr) {

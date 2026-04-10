@@ -174,6 +174,11 @@ static void gdb_handle_exception(int exception_vector) {
             case 'c':
             case 's':
                 handle_continue_step(ptr); return;
+            case 'C':
+            case 'S':
+                if(handle_continue_step_signal(ptr))
+                    return;
+                break;
             case 'Z':
             case 'z':
                 handle_breakpoint(ptr); break;

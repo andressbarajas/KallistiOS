@@ -65,6 +65,7 @@ void handle_write_mem(char *ptr);
 void handle_read_mem_binary(char *ptr);
 void handle_write_mem_binary(char *ptr);
 void handle_continue_step(char *ptr);
+bool handle_continue_step_signal(char *ptr);
 void handle_breakpoint(char *ptr);
 void handle_query(char *ptr);
 void handle_set_query(char *ptr);
