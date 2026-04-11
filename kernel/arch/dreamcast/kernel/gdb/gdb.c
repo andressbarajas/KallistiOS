@@ -214,6 +214,10 @@ irq_context_t *gdb_get_irq_context(void) {
     return irq_ctx;
 }
 
+void gdb_set_connected(bool is_connected) {
+    connected = is_connected;
+}
+
 
 static void handle_exception(irq_t code, irq_context_t *context, void *data) {
     (void)data;
@@ -285,6 +289,7 @@ void gdb_init(void) {
     irq_set_handler(EXC_DATA_ADDRESS_READ, handle_exception, NULL);
     irq_set_handler(EXC_DATA_ADDRESS_WRITE, handle_exception, NULL);
     irq_set_handler(EXC_USER_BREAK_PRE, handle_exception, NULL);
+    irq_set_handler(EXC_USER_BREAK_POST, handle_exception, NULL);
 
     irq_set_handler(IRQ_TRAP_CODE(TRAPA_GDB_SINGLESTEP), handle_gdb_trapa, NULL);
     irq_set_handler(IRQ_TRAP_CODE(TRAPA_GDB_BREAKPOINT), handle_gdb_trapa, NULL);

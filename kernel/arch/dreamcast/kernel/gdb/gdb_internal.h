@@ -35,6 +35,7 @@ char *hex_to_mem(const char *src, char *dest, size_t count);
 size_t hex_to_int(char **ptr, uint32_t *int_value);
 void undo_single_step(void);
 irq_context_t *gdb_get_irq_context(void);
+void gdb_set_connected(bool is_connected);
 
 void set_regs_thread(int tid);
 void set_ctrl_thread(int tid);
