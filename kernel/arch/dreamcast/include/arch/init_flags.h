@@ -48,7 +48,6 @@ __BEGIN_DECLS
     KOS_INIT_FLAG_NONE(flags, INIT_NO_DCLOAD, fs_dcload_init_console); \
     KOS_INIT_FLAG_NONE(flags, INIT_NO_DCLOAD, fs_dcload_shutdown); \
     KOS_INIT_FLAG_NONE(flags, INIT_NO_DCLOAD, arch_init_net_dcload_ip); \
-    KOS_INIT_FLAG(flags, INIT_GDB, gdb_init); \
     KOS_INIT_FLAG(flags, INIT_NO_DCLOAD, arch_init_net_no_dcload); \
     KOS_INIT_FLAG(flags, INIT_CDROM, cdrom_init); \
     KOS_INIT_FLAG(flags, INIT_CDROM, cdrom_shutdown); \
@@ -109,7 +108,6 @@ __BEGIN_DECLS
 
 #define INIT_OCRAM          0x10000000  /**< \brief Use half of the dcache as RAM */
 #define INIT_NO_DCLOAD      0x20000000  /**< \brief Disable dcload */
-#define INIT_GDB            0x40000000  /**< \brief Enable GDB stub auto-init */
 
 /** @} */
 
