@@ -8,6 +8,16 @@
 
 */
 
+/*
+   Shared utility helpers for the GDB stub.
+
+   These helpers provide:
+     - hexadecimal character conversion
+     - binary/hex buffer transforms
+     - integer parsing for packet fields
+     - thread ID formatting for query and stop-reply packets
+*/
+
 #include <stdio.h>
 
 #include "gdb_internal.h"

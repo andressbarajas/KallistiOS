@@ -8,6 +8,16 @@
 
 */
 
+/*
+   Core Dreamcast GDB stub entry points and exception dispatch.
+
+   This file owns:
+     - stub initialization and shutdown
+     - trap and exception registration
+     - the main remote-protocol dispatch loop
+     - connection lifecycle state for a live GDB session
+*/
+
 /* Remote communication protocol.
 
    A debug packet whose contents are <data>

@@ -6,6 +6,19 @@
 
 */
 
+/*
+   Implements GDB query and set-query packet handling.
+
+   Supported queries include:
+     - qSupported, qTStatus, qOffsets, qAttached, qSymbol
+     - qC, qfThreadInfo, qsThreadInfo, qThreadExtraInfo
+     - qGetTLSAddr
+     - QStartNoAckMode
+
+   Thread queries use live KOS thread metadata, and TLS lookups compute the
+   address of the static TLS block for the selected thread.
+*/
+
 #include <stdio.h>
 
 #include <kos/thread.h>

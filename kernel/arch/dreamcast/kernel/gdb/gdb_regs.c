@@ -8,6 +8,19 @@
 
 */
 
+/*
+   Implements SH4 register access for the GDB remote stub.
+
+   This module provides:
+     - g / G access to the raw SH4 register block expected by GDB
+     - p / P access to individual raw and pseudo registers
+     - register formatting for T stop replies
+     - thread-selected register contexts via Hg packets
+
+   Pseudo registers such as drN and fvN are handled through single-register
+   access rather than the bulk g/G packet stream.
+*/
+
 #include "gdb_internal.h"
 
 /* map from KOS register context order to GDB sh4 order */

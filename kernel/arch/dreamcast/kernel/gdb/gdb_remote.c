@@ -6,6 +6,15 @@
 
 */
 
+/*
+   Implements remote stop and control replies for the GDB stub.
+
+   This file is responsible for:
+     - translating SH4 exceptions into GDB-visible stop signals
+     - building T stop replies with register, thread, and reason fields
+     - handling D detach and k kill control packets
+*/
+
 #include <arch/arch.h>
 
 #include "gdb_internal.h"

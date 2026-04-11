@@ -6,6 +6,18 @@
 
 */
 
+/*
+   Implements extended 'v' packet handling for the GDB remote stub.
+
+   Supported subcommands:
+     - vCont?      : advertise supported vCont actions
+     - vCont;c     : continue execution
+     - vCont;s     : single-step execution
+     - vMustReplyEmpty
+     - vCtrlC
+     - vKill
+*/
+
 #include <arch/arch.h>
 
 #include "gdb_internal.h"

@@ -8,6 +8,19 @@
 
 */
 
+/*
+   Implements the transport layer for the GDB remote serial protocol.
+
+   This module handles:
+     - packet framing and checksum validation
+     - optional no-ack mode (QStartNoAckMode)
+     - run-length encoding for outbound replies
+     - automatic switching between dc-load and SCIF transports
+
+   The current encoder avoids count bytes that would collide with packet
+   framing characters on the wire.
+*/
+
 #include <dc/dcload.h>
 #include <dc/scif.h>
 

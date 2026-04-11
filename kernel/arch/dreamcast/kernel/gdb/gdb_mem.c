@@ -8,6 +8,17 @@
 
 */
 
+/*
+   Implements GDB memory access packets for Dreamcast targets.
+
+   Supported packet families:
+     - m / M : hexadecimal memory reads and writes
+     - x / X : binary memory reads and writes
+
+   The handlers validate accessible ranges, escape binary payloads as required
+   by RSP, and flush the instruction cache after writes that may affect code.
+*/
+
 #include <arch/arch.h>
 #include <arch/cache.h>
 

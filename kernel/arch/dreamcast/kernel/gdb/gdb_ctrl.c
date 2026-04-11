@@ -8,6 +8,18 @@
 
 */
 
+/*
+   Implements continue and single-step control for the GDB remote stub.
+
+   Supported control packets:
+     - c / s         : continue and single-step
+     - Cxx / Sxx     : continue and single-step with signal
+     - Hc            : select the thread used for execution control
+
+   Single-step is implemented by decoding the next SH4 instruction and
+   patching the appropriate destination with an internal TRAPA trap.
+*/
+
 #include <arch/irq.h>
 #include <arch/cache.h>
 

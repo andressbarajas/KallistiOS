@@ -8,6 +8,19 @@
 
 */
 
+/*
+   Implements GDB breakpoint and watchpoint packets for the Dreamcast target.
+
+   Supported packet families:
+     - Z0/z0: software breakpoints via TRAPA instruction patching
+     - Z1-Z4/z1-z4: hardware breakpoints and watchpoints via the SH4 UBC
+
+   Notes:
+     - software breakpoints require 2-byte alignment
+     - hardware breakpoints are limited to SH4 UBC-supported access sizes
+     - the hardware breakpoint path uses the existing direct UBC register backend
+*/
+
 #include <arch/cache.h>
 
 #include "gdb_internal.h"
