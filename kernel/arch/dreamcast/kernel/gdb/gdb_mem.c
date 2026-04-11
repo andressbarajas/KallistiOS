@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/gdb/gdb_mem.c
+   arch/dreamcast/kernel/gdb/gdb_mem.c
 
    Copyright (C) Megan Potter
    Copyright (C) Richard Moats
@@ -15,8 +15,10 @@
      - m / M : hexadecimal memory reads and writes
      - x / X : binary memory reads and writes
 
-   The handlers validate accessible ranges, escape binary payloads as required
-   by RSP, and flush the instruction cache after writes that may affect code.
+   The handlers heuristically validate accessible ranges using KOS address
+   helpers, escape outbound binary replies and unescape inbound binary payloads
+   as required by RSP, and flush the instruction cache after writes that may
+   affect code.
 */
 
 #include <arch/arch.h>
@@ -26,6 +28,13 @@
 
 #include "gdb_internal.h"
 
+/*
+   Heuristically validates a single address for GDB memory access.
+
+   Addresses are normalized to the cached P1 alias before consulting KOS's
+   generic address helpers. Read-only inspection of P4 hardware space is also
+   allowed.
+*/
 static bool is_valid_memory_address(uintptr_t addr, bool is_write) {
     uintptr_t normalized = (addr & MEM_AREA_CACHE_MASK) | MEM_AREA_P1_BASE;
 
@@ -38,6 +47,12 @@ static bool is_valid_memory_address(uintptr_t addr, bool is_write) {
     return false;
 }
 
+/*
+   Validates an address range by checking the first and last accessed bytes.
+
+   Zero-length accesses are allowed. Overflow in the computed end address is
+   treated as invalid.
+*/
 static bool is_valid_memory_range(uint32_t addr, uint32_t len, bool is_write) {
     uintptr_t end_addr;
 
@@ -71,10 +86,10 @@ static bool parse_binary_memory_header(char **ptr, uint32_t *addr, uint32_t *len
 }
 
 /*
- * Handle the 'm' command.
- * Reads memory from the target at a given address and length.
- * Format: mADDR,LEN
- */
+   Handle the 'm' command.
+   Reads memory from the target at a given address and length.
+   Format: mADDR,LEN
+*/
 void handle_read_mem(char *ptr) {
     uint32_t addr = 0;
     uint32_t len = 0;
@@ -98,10 +113,12 @@ void handle_read_mem(char *ptr) {
 }
 
 /*
- * Handle the 'M' command.
- * Writes memory to the target at a given address.
- * Format: MADDR,LEN:DATA
- */
+   Handle the 'M' command.
+   Writes memory to the target at a given address.
+   Format: MADDR,LEN:DATA
+
+   DATA is hex-encoded.
+*/
 void handle_write_mem(char *ptr) {
     uint32_t addr = 0;
     uint32_t len = 0;
@@ -127,6 +144,16 @@ void handle_write_mem(char *ptr) {
     }
 }
 
+/*
+   Handle the 'x' command.
+   Reads memory from the target and returns it as RSP-escaped binary data.
+   Format: xADDR,LEN
+
+   - ADDR: Target address in hex
+   - LEN:  Number of bytes to read
+
+   Special characters are escaped according to the GDB remote protocol.
+*/
 void handle_read_mem_binary(char *ptr) {
     uint32_t addr = 0;
     uint32_t len = 0;
@@ -156,6 +183,12 @@ void handle_read_mem_binary(char *ptr) {
     *out = '\0';
 }
 
+/*
+   Decodes an escaped RSP binary payload into exactly output_len bytes.
+
+   The caller is expected to provide a well-formed payload with enough source
+   bytes to satisfy the requested output length.
+*/
 static void unescape_binary_data(const unsigned char *src, char *dest,
                                  uint32_t output_len) {
     for(uint32_t i = 0; i < output_len; ++i) {
@@ -168,6 +201,15 @@ static void unescape_binary_data(const unsigned char *src, char *dest,
     }
 }
 
+/*
+   Handle the 'X' command.
+   Writes binary data to target memory at a given address.
+   Format: XADDR,LEN:DATA
+
+   - ADDR: Target address in hex
+   - LEN:  Number of bytes to write
+   - DATA: Raw binary data (not hex-encoded), may include RSP escape sequences
+*/
 void handle_write_mem_binary(char *ptr) {
     uint32_t addr = 0;
     uint32_t len = 0;

@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/gdb/gdb_regs.c
+   arch/dreamcast/kernel/gdb/gdb_regs.c
 
    Copyright (C) Megan Potter
    Copyright (C) Richard Moats
@@ -23,7 +23,7 @@
 
 #include "gdb_internal.h"
 
-/* map from KOS register context order to GDB sh4 order */
+/* Map from KOS register context order to GDB sh4 order */
 #define KOS_REG(r)      offsetof(irq_context_t, r)
 
 uint32_t kos_reg_map[] = {
@@ -45,12 +45,12 @@ uint32_t kos_reg_map[] = {
 #undef KOS_REG
 
 /*
- * GDB's raw SH4 remote register block is 67 32-bit registers:
- *  - 41 directly readable registers we map from irq_context_t
- *  - 18 unavailable raw slots for ssr/spc and banked r0-r7 values
- *  - 8 reserved blank raw slots
- *
- * Pseudo registers like dr0-dr14 and fv0-fv12 are not part of the g/G block.
+   GDB's raw SH4 remote register block is 67 32-bit registers:
+     - 41 directly readable registers we map from irq_context_t
+     - 18 unavailable raw slots for ssr/spc and banked r0-r7 values
+     - 8 reserved blank raw slots
+
+   Pseudo registers like dr0-dr14 and fv0-fv12 are not part of the g/G block.
  */
 #define BASE_REG_COUNT         ((int)(sizeof(kos_reg_map) / sizeof(kos_reg_map[0])))
 #define UNAVAILABLE_REG_COUNT  18
@@ -65,10 +65,12 @@ uint32_t kos_reg_map[] = {
 static int32_t gdb_thread_for_regs = GDB_THREAD_ANY;
 static irq_context_t *regs_irq_ctx;
 
+/* Sets the current thread ID used for register operations. */
 void set_regs_thread(int tid) {
     gdb_thread_for_regs = tid;
 }
 
+/* Selects the appropriate IRQ context for the current register thread. */
 void setup_regs_context(void) {
     irq_context_t *default_context = gdb_get_irq_context();
 
@@ -78,16 +80,17 @@ void setup_regs_context(void) {
         return;
     }
 
-    {
-        kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_regs);
-        regs_irq_ctx = target ? &target->context : default_context;
-    }
+    kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_regs);
+
+    regs_irq_ctx = target ? &target->context : default_context;
 }
 
+/* Packs two FR register words into one pseudo double register (drN). */
 static uint64_t build_dr(uint32_t fr_low, uint32_t fr_high) {
     return ((uint64_t)fr_high << 32) | fr_low;
 }
 
+/* Packs four FR register words into one pseudo vector register (fvN). */
 static void build_fv(uint32_t fv[4], const irq_context_t *context, int base) {
     fv[0] = context->fr[base + 0];
     fv[1] = context->fr[base + 1];
@@ -95,15 +98,38 @@ static void build_fv(uint32_t fv[4], const irq_context_t *context, int base) {
     fv[3] = context->fr[base + 3];
 }
 
+/*
+   Appends a single register to the GDB T packet in stop reply format.
+
+   Format: nn:vvvvvvvv;
+     - nn: register number (2 hex digits)
+     - vvvvvvvv: value encoded in hex (endianness-respecting)
+     - Ends with a semicolon
+
+   Returns pointer to the end of the output buffer.
+*/
 static char *append_reg(char *out, int regnum, const void *value, size_t size) {
     *out++ = highhex(regnum);
     *out++ = lowhex(regnum);
     *out++ = ':';
     out = mem_to_hex((const char *)value, out, size);
     *out++ = ';';
+
     return out;
 }
 
+/*
+   Appends the mapped base SH4 registers to a GDB T stop reply.
+
+   Includes:
+     - General-purpose registers (r0-r15)
+     - Control registers (pc, pr, gbr, vbr, mach, macl, sr, fpul, fpscr)
+     - Floating-point registers (fr0-fr15)
+
+   Does not include unavailable raw g/G slots or pseudo registers.
+
+   Returns a pointer to the end of the output buffer.
+*/
 char *append_regs(char *out, const irq_context_t *context) {
     for(int i = 0; i < BASE_REG_COUNT; ++i) {
         const uint32_t *reg_ptr =
@@ -223,38 +249,45 @@ static bool write_register_hex(int regnum, const char *in) {
 }
 
 /*
- * Handle the 'p' command.
- * Returns the value of a single register.
- */
+   Handle the 'p' command.
+   Reads a single register from the target.
+   Format: pNN
+   Where NN is the register number in hex.
+*/
 void handle_read_reg(char *ptr) {
     uint32_t regnum = 0;
 
     if(!hex_to_int(&ptr, &regnum) || *ptr != '\0' ||
        !read_register_hex(remcom_out_buffer, (int)regnum)) {
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "p: invalid register request");
     }
 }
 
 /*
- * Handle the 'P' command.
- * Writes a single register in the form Pn...=r...
- */
+   Handle the 'P' command.
+   Writes a single register to the target.
+   Format: PNN=...
+   Where NN is the register number in hex and the value width depends on the
+   selected register.
+*/
 void handle_write_reg(char *ptr) {
     uint32_t regnum = 0;
 
     if(!hex_to_int(&ptr, &regnum) || *ptr++ != '=' ||
        !write_register_hex((int)regnum, ptr)) {
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "P: invalid register write");
         return;
     }
 
-    strcpy(remcom_out_buffer, GDB_OK);
+    gdb_put_ok();
 }
 
 /*
- * Handle the 'g' command.
- * Returns the full set of general-purpose registers.
- */
+   Handle the 'g' command.
+   Returns the full raw SH4 g/G register block expected by GDB.
+   This includes the mapped base registers plus zero-filled unavailable and
+   reserved slots.
+*/
 void handle_read_regs(char *ptr) {
     (void)ptr;
 
@@ -274,17 +307,18 @@ void handle_read_regs(char *ptr) {
 }
 
 /*
- * Handle the 'G' command.
- * Writes to all general-purpose registers.
- * Format: Gxxxxxxxx.... (entire register state in hex).
- */
+   Handle the 'G' command.
+   Consumes the full raw SH4 g/G register block supplied by GDB.
+   Only the mapped base registers are written back to irq_context_t;
+   unavailable and reserved slots are accepted and ignored.
+*/
 void handle_write_regs(char *ptr) {
     char *in = ptr;
     size_t remaining = strlen(in);
     irq_context_t *context;
 
     if(remaining < (size_t)RAW_REG_COUNT * 8) {
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "G: short register payload");
         return;
     }
 
@@ -296,5 +330,5 @@ void handle_write_regs(char *ptr) {
 
     in += (UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT) * 8;
 
-    strcpy(remcom_out_buffer, GDB_OK);
+    gdb_put_ok();
 }

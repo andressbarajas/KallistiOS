@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/gdb/gdb_ctrl.c
+   arch/dreamcast/kernel/gdb/gdb_ctrl.c
 
    Copyright (C) Megan Potter
    Copyright (C) Richard Moats
@@ -14,10 +14,10 @@
    Supported control packets:
      - c / s         : continue and single-step
      - Cxx / Sxx     : continue and single-step with signal
-     - Hc            : select the thread used for execution control
+     - Hg / Hc       : select threads for register or execution control
 
    Single-step is implemented by decoding the next SH4 instruction and
-   patching the appropriate destination with an internal TRAPA trap.
+   patching the computed stop location with an internal TRAPA trap.
 */
 
 #include <arch/irq.h>
@@ -75,10 +75,16 @@ static void resume_target(bool stepping, bool set_pc, uint32_t pc) {
         do_single_step();
 }
 
+/* Sets the target thread for control operations (continue/step). */
 void set_ctrl_thread(int tid) {
     gdb_thread_for_ctrl = tid;
 }
 
+/*
+   Sets the IRQ context used for control operations like continue/step.
+   If the selected thread is "any" or "all", or the requested thread no longer
+   exists, it falls back to the interrupted thread's current context.
+*/
 void setup_ctrl_context(void) {
     irq_context_t *default_context = gdb_get_irq_context();
 
@@ -88,12 +94,15 @@ void setup_ctrl_context(void) {
         return;
     }
 
-    {
-        kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_ctrl);
-        ctrl_irq_ctx = target ? &target->context : default_context;
-    }
+    kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_ctrl);
+    ctrl_irq_ctx = target ? &target->context : default_context;
 }
 
+/*
+   Prepares for single-step execution by patching the computed next stop
+   address with a TRAPA. Branches, delay slots, returns, and TRAPA opcodes are
+   decoded so the trap lands where execution would naturally continue.
+*/
 static void do_single_step(void) {
     short *instr_mem;
     int displacement;
@@ -114,19 +123,19 @@ static void do_single_step(void) {
                 displacement |= 0xffffff00;
 
             /*
-               * Remember PC points to second instr.
-               * after PC of branch ... so add 4
-               */
+               Remember PC points to second instr.
+               after PC of branch ... so add 4
+            */
             instr_mem = (short *)(ctrl_irq_ctx->pc + displacement + 4);
         }
         else {
-            /* can't put a trapa in the delay slot of a bt/s instruction */
+            /* Can't safely place trapa in BT/S delay slot */
             instr_mem += (br_opcode == BTS_INSTR) ? 2 : 1;
         }
     }
     else if(br_opcode == BF_INSTR || br_opcode == BFS_INSTR) {
         if(ctrl_irq_ctx->sr & T_BIT_MASK) {
-            /* can't put a trapa in the delay slot of a bf/s instruction */
+            /* Can't put a trapa in the delay slot of a bf/s instruction */
             instr_mem += (br_opcode == BFS_INSTR) ? 2 : 1;
         }
         else {
@@ -136,9 +145,9 @@ static void do_single_step(void) {
                 displacement |= 0xffffff00;
 
             /*
-               * Remember PC points to second instr.
-               * after PC of branch ... so add 4
-               */
+               Remember PC points to second instr.
+               after PC of branch ... so add 4
+            */
             instr_mem = (short *)(ctrl_irq_ctx->pc + displacement + 4);
         }
     }
@@ -149,9 +158,9 @@ static void do_single_step(void) {
             displacement |= 0xfffff000;
 
         /*
-         * Remember PC points to second instr.
-         * after PC of branch ... so add 4
-         */
+          Remember PC points to second instr.
+          after PC of branch ... so add 4
+        */
         instr_mem = (short *)(ctrl_irq_ctx->pc + displacement + 4);
     }
     else if((opcode & UCOND_RBR_MASK) == JSR_INSTR) {
@@ -174,8 +183,10 @@ static void do_single_step(void) {
     icache_flush_range((uint32_t)instr_mem, 2);
 }
 
-/* Undo the effect of a previous do_single_step.  If we single stepped,
-   restore the old instruction. */
+/*
+   Undo the effect of a previous do_single_step.  If we single stepped,
+   restore the old instruction.
+*/
 void undo_single_step(void) {
     if(stepped) {
         short *instr_mem;
@@ -188,9 +199,22 @@ void undo_single_step(void) {
 }
 
 /*
- * Handle the 'c' (continue) and 's' (single-step) commands.
- * Optionally takes a new PC value. Updates the PC and steps if needed.
- */
+   Handle the 'c' (continue) and 's' (single-step) GDB commands.
+
+   These commands resume execution of the program, optionally from a new PC.
+   - 'c' continues execution normally.
+   - 's' performs a single instruction step.
+
+   Format:
+     - 'c'           → continue from current PC
+     - 'cXXXX'       → continue from address XXXX
+     - 's'           → single-step from current PC
+     - 'sXXXX'       → single-step from address XXXX
+
+   This function parses the optional address (if present), updates the selected
+   control thread's PC, and resumes that thread. If single-stepping, it
+   prepares the computed next stop location for trapping.
+*/
 void handle_continue_step(char *ptr) {
     bool stepping = (ptr[-1] == 's');
     uint32_t addr = 0;
@@ -199,17 +223,34 @@ void handle_continue_step(char *ptr) {
     resume_target(stepping, set_pc, addr);
 }
 
+/*
+   Handles the 'C' and 'S' packets for continue or step with signal.
+
+   Format:
+     - 'Cxx'         → continue with signal xx
+     - 'Sxx'         → step one instruction with signal xx
+     - 'Cxx;ADDR'    → continue from address ADDR with signal xx
+     - 'Sxx;ADDR'    → step from address ADDR with signal xx
+
+   Signals are ignored on SH4; this just resumes or steps the selected control
+   thread as needed. If 'S' is used, single-step mode is enabled before
+   continuing.
+
+   ptr points to the character after 'C' or 'S'.
+*/
 bool handle_continue_step_signal(char *ptr) {
     bool stepping = (ptr[-1] == 'S');
     uint32_t signal = 0;
     uint32_t addr = 0;
     bool set_pc = false;
 
+    /* Parse signal (always two hex digits) */
     if(hex_to_int(&ptr, &signal) != 2) {
         gdb_error_with_code_str(GDB_EINVAL, "C/S: invalid signal packet");
         return false;
     }
 
+    /* Optional: skip semicolon and parse new PC if present */
     if(*ptr == ';') {
         ++ptr;
 
@@ -231,6 +272,19 @@ bool handle_continue_step_signal(char *ptr) {
     return true;
 }
 
+/*
+   Handle the 'H' packet to select the active thread for GDB operations.
+
+   Format:
+     - HgXX → Set thread for register ops (g, G, p, P)
+     - HcXX → Set thread for control ops (c, s, C, S, and vCont continue/step)
+
+   XX is a thread ID in hex. Special values:
+     - 0        → Any thread (default)
+     - 0xFFFFFFFF (or -1) → All threads
+
+   Unsupported selectors and unknown thread IDs return invalid-argument errors.
+*/
 void handle_thread_select(char *ptr) {
     int tid = GDB_THREAD_ANY;
     char type = *ptr++;
@@ -241,12 +295,12 @@ void handle_thread_select(char *ptr) {
     else if(hex_to_int(&ptr, &parsed_tid) && *ptr == '\0')
         tid = (int)parsed_tid;
     else {
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "H: invalid thread selector");
         return;
     }
 
     if(tid > GDB_THREAD_ANY && !thd_by_tid((tid_t)tid)) {
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "H: unknown thread");
         return;
     }
 
@@ -255,9 +309,9 @@ void handle_thread_select(char *ptr) {
     else if(type == 'c')
         set_ctrl_thread(tid);
     else {
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "H: unsupported selector");
         return;
     }
 
-    strcpy(remcom_out_buffer, GDB_OK);
+    gdb_put_ok();
 }

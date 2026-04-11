@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/gdb/gdb_vpacket.c
+   arch/dreamcast/kernel/gdb/gdb_vpacket.c
 
    Copyright (C) 2026 Andy Barajas
 
@@ -22,6 +22,13 @@
 
 #include "gdb_internal.h"
 
+/*
+   Processes GDB 'vCont' subcommands.
+   Currently supports:
+     - 'vCont?'  -> advertise supported actions
+     - 'vCont;c' → continue
+     - 'vCont;s' → single-step
+*/
 static bool handle_vcont(char *ptr) {
     if(strncmp(ptr, "Cont?", 5) == 0) {
         gdb_put_str("vCont;c;s");
@@ -44,6 +51,17 @@ static bool handle_vcont(char *ptr) {
     return false;
 }
 
+/*
+   Handle GDB 'v' packets for extended operations.
+
+   Supported subcommands:
+     - vCont?         → Report supported actions ('c' and 's')
+     - vCont;c        → Continue execution
+     - vCont;s        → Step one instruction
+     - vMustReplyEmpty → Acknowledge empty reply support
+     - vCtrlC         → Reboot the target after acknowledging the packet
+     - vKill          → Abort execution
+*/
 bool handle_v_packet(char *ptr) {
     if(strncmp(ptr, "Cont", 4) == 0)
         return handle_vcont(ptr);

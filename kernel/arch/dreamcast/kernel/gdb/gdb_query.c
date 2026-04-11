@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/gdb/gdb_query.c
+   arch/dreamcast/kernel/gdb/gdb_query.c
 
    Copyright (C) 2026 Andy Barajas
 
@@ -16,7 +16,7 @@
      - QStartNoAckMode
 
    Thread queries use live KOS thread metadata, and TLS lookups compute the
-   address of the static TLS block for the selected thread.
+   address of the static TLS block for the requested thread.
 */
 
 #include <stdio.h>
@@ -74,6 +74,7 @@ static void parse_qsupported_features(const char *features) {
     }
 }
 
+/* Callback for thd_each() for qfThreadInfo packet. */
 static int append_thread_id(kthread_t *thd, void *user_data) {
     thread_list_state_t *state = (thread_list_state_t *)user_data;
     char tid_hex[9];
@@ -98,16 +99,32 @@ static int append_thread_id(kthread_t *thd, void *user_data) {
     return 0;
 }
 
+/*
+   Handle the 'T' command.
+   Checks whether a thread ID is valid.
+   Format: T<thread-id> where the thread ID is an unpadded hex value.
+*/
 void handle_thread_alive(char *ptr) {
     uint32_t tid = 0;
 
     if(hex_to_int(&ptr, &tid) && *ptr == '\0' && thd_by_tid((tid_t)tid))
-        strcpy(remcom_out_buffer, GDB_OK);
+        gdb_put_ok();
     else
-        strcpy(remcom_out_buffer, "E01");
+        gdb_error_with_code_str(GDB_EINVAL, "T: invalid or dead thread");
 }
 
+/*
+   Handle 'q' query packets.
+
+   This dispatcher implements the query subset advertised by the stub and
+   returns an empty reply for unsupported queries.
+*/
 void handle_query(char *ptr) {
+    /*
+       Handle the 'qSupported' command.
+       Negotiates optional protocol features and reports the capabilities
+       supported by this stub.
+    */
     if(strncmp(ptr, "Supported:", 10) == 0) {
         parse_qsupported_features(ptr + 10);
         snprintf(remcom_out_buffer, BUFMAX,
@@ -122,26 +139,51 @@ void handle_query(char *ptr) {
         return;
     }
 
+    /*
+       Handle the 'qTStatus' command.
+       Reports if there is pending asynchronous stop information.
+       Format: qTStatus
+       Response: Empty means no pending stop.
+    */
     if(strncmp(ptr, "TStatus", 7) == 0) {
         gdb_clear_out_buffer();
         return;
     }
-
+    /*
+       Handle the 'qOffsets' command.
+       Requests the memory offsets for text, data, and bss.
+       Format: qOffsets
+       Response: Text=ADDR;Data=ADDR;Bss=ADDR
+    */
     if(strncmp(ptr, "Offsets", 7) == 0) {
         gdb_put_str("Text=0;Data=0;Bss=0");
         return;
     }
-
+    /*
+       Handle the 'qAttached' command.
+       Reports if the debugger was already attached (1) or newly attached (0).
+       Format: qAttached
+       This stub always reports "1".
+    */
     if(strncmp(ptr, "Attached", 8) == 0) {
         gdb_put_str("1");
         return;
     }
-
+    /*
+       Handle the 'qSymbol' command.
+       GDB sends this to initiate or continue symbol lookup negotiation.
+       This stub does not request any symbols and simply replies "OK".
+    */
     if(strncmp(ptr, "Symbol", 6) == 0) {
         gdb_put_ok();
         return;
     }
-
+    /*
+       Handle the 'qC' command.
+       Reports the current active thread ID.
+       Format: qC
+       Response: QC<thread-id> where the thread ID is an unpadded hex value.
+    */
     if(*ptr == 'C') {
         kthread_t *thd = thd_get_current();
 
@@ -150,7 +192,11 @@ void handle_query(char *ptr) {
         format_thread_id_hex(remcom_out_buffer + 2, (uint32_t)thd->tid);
         return;
     }
-
+    /*
+       Handle the 'qfThreadInfo' command.
+       Format: qfThreadInfo
+       Response: m<thread-id>[,<thread-id>...]
+    */
     if(strncmp(ptr, "fThreadInfo", 11) == 0) {
         thread_list_state_t state;
 
@@ -162,16 +208,37 @@ void handle_query(char *ptr) {
         state.first = true;
 
         if(thd_each(append_thread_id, &state) < 0)
-            strcpy(remcom_out_buffer, "E01");
+            gdb_error_with_code_str(GDB_EGENERIC,
+                                    "qfThreadInfo: response too large");
 
         return;
     }
+    /*
+       Handle the 'qsThreadInfo' command.
+       Returns continuation thread list data after a 'qfThreadInfo' packet.
+       Format: qsThreadInfo
 
+       This implementation does not paginate thread IDs across multiple
+       responses. If the initial qfThreadInfo reply succeeds, qsThreadInfo
+       always returns 'l' to indicate the end of the list.
+    */
     if(strncmp(ptr, "sThreadInfo", 11) == 0) {
         strcpy(remcom_out_buffer, "l");
         return;
     }
+    /*
+       Handle the 'qThreadExtraInfo' command.
+       Provides hex-encoded human-readable information about a specific thread.
+       Format: qThreadExtraInfo,<thread-id>
 
+       This implementation returns the thread label when one is available and
+       an empty reply for unlabeled threads. GDB may display the text in thread
+       listings.
+
+       Example:
+         Request:  qThreadExtraInfo,04
+         Response: 6D61696E20746872656164   ("main thread")
+    */
     if(strncmp(ptr, "ThreadExtraInfo,", 16) == 0) {
         uint32_t tid = 0;
 
@@ -188,16 +255,26 @@ void handle_query(char *ptr) {
                     gdb_clear_out_buffer();
             }
             else {
-                strcpy(remcom_out_buffer, "E01");
+                gdb_error_with_code_str(GDB_EINVAL,
+                                        "qThreadExtraInfo: unknown thread");
             }
         }
         else {
-            strcpy(remcom_out_buffer, "E01");
+            gdb_error_with_code_str(GDB_EINVAL,
+                                    "qThreadExtraInfo: invalid packet");
         }
 
         return;
     }
-
+    /*
+       Handle the 'qGetTLSAddr' command.
+       Returns the address of a TLS variable for a specific thread.
+       Format: qGetTLSAddr:TID,OFFSET,LMID
+        - TID: Thread ID
+        - OFFSET: Offset from the base of TLS block
+        - LMID: Link map ID (ignored in KOS)
+       Response: hex-encoded target address of the requested TLS location
+    */
     if(strncmp(ptr, "GetTLSAddr:", 11) == 0) {
         uint32_t tid = 0;
         uint32_t offset = 0;
@@ -218,11 +295,13 @@ void handle_query(char *ptr) {
                            sizeof(tls_addr));
             }
             else {
-                strcpy(remcom_out_buffer, "E01");
+                gdb_error_with_code_str(GDB_EINVAL,
+                                        "qGetTLSAddr: unavailable TLS for thread");
             }
         }
         else {
-            strcpy(remcom_out_buffer, "E01");
+            gdb_error_with_code_str(GDB_EINVAL,
+                                    "qGetTLSAddr: invalid packet");
         }
 
         return;
@@ -231,6 +310,15 @@ void handle_query(char *ptr) {
     remcom_out_buffer[0] = '\0';
 }
 
+/*
+   Handle the 'Q' command.
+   Handles set-query packets that change stub behavior.
+
+   Currently supported:
+     - QStartNoAckMode
+
+   QStartNoAckMode enables no-ack mode and replies "OK".
+*/
 void handle_set_query(char *ptr) {
     if(strncmp(ptr, "StartNoAckMode", 14) == 0) {
         set_no_ack_mode_enabled(true);

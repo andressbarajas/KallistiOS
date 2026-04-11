@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/gdb/gdb_utils.c
+   arch/dreamcast/kernel/gdb/gdb_utils.c
 
    Copyright (C) Megan Potter
    Copyright (C) Richard Moats
@@ -8,15 +8,7 @@
 
 */
 
-/*
-   Shared utility helpers for the GDB stub.
-
-   These helpers provide:
-     - hexadecimal character conversion
-     - binary/hex buffer transforms
-     - integer parsing for packet fields
-     - thread ID formatting for query and stop-reply packets
-*/
+/* Shared utility helpers for the GDB stub. */
 
 #include <stdio.h>
 
