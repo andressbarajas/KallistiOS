@@ -136,6 +136,8 @@
 #include <dc/dcload.h>
 #include <dc/scif.h>
 
+#include <stdio.h>
+
 #include "gdb_internal.h"
 
 /* TRAPA #0x20: internal single-step or resume */
@@ -148,6 +150,8 @@
 #define TRAPA_USER_BREAKPOINT 255
 
 irq_context_t *irq_ctx;
+static bool initialized;
+static bool connected;
 
 /*
     This function does all exception handling.  It only does two things -
@@ -165,6 +169,7 @@ static void gdb_handle_exception(int exception_vector) {
     while(true) {
         remcom_out_buffer[0] = 0;
         ptr = (char *)get_packet();
+        connected = true;
 
         switch(*ptr++) {
             case '?': handle_t_stop_reply(exception_vector); break;
@@ -249,11 +254,31 @@ void gdb_breakpoint(void) {
     __asm__("trapa	#0xff"::);
 }
 
+void gdb_shutdown(int status) {
+    char *out;
+
+    if(!initialized || !connected)
+        return;
+
+    out = gdb_get_out_buffer();
+    snprintf(out, BUFMAX, "W%02x", status & 0xff);
+    put_packet(out);
+    connected = false;
+}
+
 void gdb_init(void) {
+    if(initialized)
+        return;
+
+    initialized = true;
+    connected = false;
+
     if(dcload_gdbpacket(NULL, 0, NULL, 0) == 0)
         using_dcl = 1;
-    else
+    else {
+        using_dcl = 0;
         scif_set_parameters(57600, 1);
+    }
 
     irq_set_handler(EXC_ILLEGAL_INSTR, handle_exception, NULL);
     irq_set_handler(EXC_SLOT_ILLEGAL_INSTR, handle_exception, NULL);

@@ -20,6 +20,7 @@
 #include <kos/platform.h>
 #include <kos/timer.h>
 #include <arch/arch.h>
+#include <arch/gdb.h>
 #include <arch/rtc.h>
 #include <dc/memory.h>
 #include <dc/perfctr.h>
@@ -132,6 +133,7 @@ KOS_INIT_FLAG_WEAK(dcload_init, true);
 KOS_INIT_FLAG_WEAK(fs_dcload_init_console, true);
 KOS_INIT_FLAG_WEAK(fs_dcload_shutdown, true);
 KOS_INIT_FLAG_WEAK(fs_dclsocket_shutdown, true);
+KOS_INIT_FLAG_WEAK(gdb_init, false);
 KOS_INIT_FLAG_WEAK(fs_init, true);
 KOS_INIT_FLAG_WEAK(fs_dev_init, true);
 KOS_INIT_FLAG_WEAK(fs_dev_shutdown, true);
@@ -232,6 +234,8 @@ int  __weak_symbol arch_auto_init(void) {
     if (!KOS_PLATFORM_IS_NAOMI)
         KOS_INIT_FLAG_CALL(arch_init_net);
 
+    KOS_INIT_FLAG_CALL(gdb_init);
+
     return 0;
 }
 
@@ -306,6 +310,8 @@ void arch_main(void) {
 
     /* Call the user's main function */
     rv = main(0, NULL);
+
+    gdb_shutdown(rv);
 
     /* Call kernel exit */
     exit(rv);
