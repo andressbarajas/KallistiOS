@@ -31,17 +31,17 @@
 /*
    Heuristically validates a single address for GDB memory access.
 
-   Addresses are normalized to the cached P1 alias before consulting KOS's
-   generic address helpers. Read-only inspection of P4 hardware space is also
-   allowed.
+   P4 SH-internal space is rejected outright; all other addresses are
+   normalized to the cached P1 alias before consulting KOS's generic address
+   helpers.
 */
 static bool is_valid_memory_address(uintptr_t addr, bool is_write) {
+    if(addr >= MEM_AREA_P4_BASE)
+        return false;
+
     uintptr_t normalized = (addr & MEM_AREA_CACHE_MASK) | MEM_AREA_P1_BASE;
 
     if(arch_valid_address(normalized) || arch_valid_text_address(normalized))
-        return true;
-
-    if(!is_write && addr >= MEM_AREA_P4_BASE)
         return true;
 
     return false;
@@ -85,6 +85,22 @@ static bool parse_binary_memory_header(char **ptr, uint32_t *addr, uint32_t *len
            hex_to_int(ptr, len);
 }
 
+static bool hex_to_mem_checked(const char *src, void *dest, uint32_t count) {
+    if(!src || !dest)
+        return false;
+
+    for(uint32_t i = 0; i < count; ++i) {
+        int high = hex(src[i * 2u]);
+        int low = hex(src[(i * 2u) + 1u]);
+
+        if(high < 0 || low < 0)
+            return false;
+    }
+
+    hex_to_mem(src, (char *)dest, count);
+    return true;
+}
+
 /*
    Handle the 'm' command.
    Reads memory from the target at a given address and length.
@@ -122,26 +138,41 @@ void handle_read_mem(char *ptr) {
 void handle_write_mem(char *ptr) {
     uint32_t addr = 0;
     uint32_t len = 0;
+    size_t payload_len;
 
-    if(parse_binary_memory_header(&ptr, &addr, &len) && *ptr++ == ':' &&
-       (len == 0 || *ptr != '\0')) {
-        if(!is_valid_memory_range(addr, len, true)) {
-            gdb_error_with_code_str(GDB_EMEM_PROT, "M: invalid write range");
-            return;
-        }
-
-        if(len > strlen(ptr) / 2u) {
-            gdb_error_with_code_str(GDB_EMEM_SIZE, "M: short write payload");
-            return;
-        }
-
-        hex_to_mem(ptr, (char *)addr, len);
-        icache_flush_range(addr, len);
-        gdb_put_ok();
-    }
-    else {
+    if(!parse_binary_memory_header(&ptr, &addr, &len) || *ptr++ != ':') {
         gdb_error_with_code_str(GDB_EINVAL, "M: invalid packet");
+        return;
     }
+
+    if(len == 0 && *ptr != '\0') {
+        gdb_error_with_code_str(GDB_EINVAL, "M: invalid packet");
+        return;
+    }
+
+    if(!is_valid_memory_range(addr, len, true)) {
+        gdb_error_with_code_str(GDB_EMEM_PROT, "M: invalid write range");
+        return;
+    }
+
+    payload_len = strlen(ptr);
+    if(payload_len < (size_t)len * 2u) {
+        gdb_error_with_code_str(GDB_EMEM_SIZE, "M: short write payload");
+        return;
+    }
+
+    if(payload_len != (size_t)len * 2u) {
+        gdb_error_with_code_str(GDB_EINVAL, "M: invalid packet");
+        return;
+    }
+
+    if(!hex_to_mem_checked(ptr, (char *)addr, len)) {
+        gdb_error_with_code_str(GDB_EINVAL, "M: invalid hex payload");
+        return;
+    }
+
+    icache_flush_range(addr, len);
+    gdb_put_ok();
 }
 
 /*
@@ -186,19 +217,32 @@ void handle_read_mem_binary(char *ptr) {
 /*
    Decodes an escaped RSP binary payload into exactly output_len bytes.
 
-   The caller is expected to provide a well-formed payload with enough source
-   bytes to satisfy the requested output length.
+   Returns false if the escaped source data is truncated or if it does not
+   decode to exactly the requested output length.
 */
-static void unescape_binary_data(const unsigned char *src, char *dest,
-                                 uint32_t output_len) {
-    for(uint32_t i = 0; i < output_len; ++i) {
-        unsigned char value = *src++;
+static bool unescape_binary_data(const unsigned char *src, size_t src_len,
+                                 char *dest, uint32_t output_len) {
+    size_t src_pos = 0;
 
-        if(value == '}')
-            value = (*src++) ^ 0x20;
+    for(uint32_t i = 0; i < output_len; ++i) {
+        unsigned char value;
+
+        if(src_pos >= src_len)
+            return false;
+
+        value = src[src_pos++];
+
+        if(value == '}') {
+            if(src_pos >= src_len)
+                return false;
+
+            value = src[src_pos++] ^ 0x20;
+        }
 
         dest[i] = (char)value;
     }
+
+    return src_pos == src_len;
 }
 
 /*
@@ -211,9 +255,20 @@ static void unescape_binary_data(const unsigned char *src, char *dest,
    - DATA: Raw binary data (not hex-encoded), may include RSP escape sequences
 */
 void handle_write_mem_binary(char *ptr) {
+    char *packet_start = ptr;
     uint32_t addr = 0;
     uint32_t len = 0;
     char tmp[BUFMAX];
+    size_t packet_len = gdb_get_in_packet_length();
+    size_t args_len;
+    size_t escaped_len;
+
+    if(packet_len == 0) {
+        gdb_error_with_code_str(GDB_EINVAL, "X: invalid packet");
+        return;
+    }
+
+    args_len = packet_len - 1u;
 
     if(!parse_binary_memory_header(&ptr, &addr, &len) || *ptr++ != ':') {
         gdb_error_with_code_str(GDB_EINVAL, "X: invalid packet");
@@ -230,7 +285,17 @@ void handle_write_mem_binary(char *ptr) {
         return;
     }
 
-    unescape_binary_data((const unsigned char *)ptr, tmp, len);
+    if((size_t)(ptr - packet_start) > args_len) {
+        gdb_error_with_code_str(GDB_EINVAL, "X: invalid packet");
+        return;
+    }
+
+    escaped_len = args_len - (size_t)(ptr - packet_start);
+    if(!unescape_binary_data((const unsigned char *)ptr, escaped_len, tmp, len)) {
+        gdb_error_with_code_str(GDB_EINVAL, "X: invalid binary payload");
+        return;
+    }
+
     memcpy((void *)addr, tmp, len);
     icache_flush_range(addr, len);
     gdb_put_ok();

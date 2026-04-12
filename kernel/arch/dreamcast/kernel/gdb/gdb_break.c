@@ -23,14 +23,16 @@
      - 8-byte operand watchpoints are synthesized as paired 32-bit UBC watches
 */
 
+#include <arch/arch.h>
 #include <arch/cache.h>
 
+#include <dc/memory.h>
 #include <dc/ubc.h>
 
 #include "gdb_internal.h"
 
 #define MAX_SW_BREAKPOINTS  32
-#define GDB_SW_BREAK_OPCODE 0xc33f
+#define GDB_SW_BREAK_OPCODE 0xC33f
 
 #define GDB_BRK_SW    0
 #define GDB_BRK_HW    1
@@ -39,7 +41,7 @@
 #define GDB_WATCH_RW  4
 
 typedef struct {
-    uint32_t addr;
+    uintptr_t addr;
     uint16_t original;
     bool active;
 } sw_breakpoint_t;
@@ -57,32 +59,72 @@ typedef struct {
 static sw_breakpoint_t sw_breakpoints[MAX_SW_BREAKPOINTS];
 static hw_breakpoint_t gdb_hw_bps[2];
 
+static uintptr_t normalize_cached_address(uintptr_t addr) {
+    return (addr & MEM_AREA_CACHE_MASK) | MEM_AREA_P1_BASE;
+}
+
+static bool is_valid_sw_breakpoint_range(uintptr_t addr, size_t length) {
+    uintptr_t end_addr;
+
+    if(length == 0)
+        return false;
+
+    end_addr = addr + length - 1u;
+    if(end_addr < addr)
+        return false;
+
+    return arch_valid_text_address(normalize_cached_address(addr)) &&
+           arch_valid_text_address(normalize_cached_address(end_addr));
+}
+
 /*
    Insert or remove a software breakpoint.
    Replaces the instruction at a 2-byte aligned address with TRAPA and keeps
    the original instruction word so it can be restored on z0 removal.
 
+   The target address is normalized to the cached P1 alias before validation,
+   tracking, and patching. Removal only restores the original instruction if
+   the live site still contains the TRAPA opcode inserted by the stub.
+
    Duplicate Z0 requests for the same address are treated as success without
    consuming an extra slot.
 */
-static void soft_breakpoint(bool set, uintptr_t addr, size_t length,
-                            char *res_buffer) {
+static void soft_breakpoint(bool set, uintptr_t addr, size_t length) {
+    uintptr_t normalized_addr;
+    volatile uint16_t *site;
+
     if((addr & 1u) || length != 2u) {
         gdb_error_with_code_str(GDB_EINVAL,
                                 "Z0: address must be 2-byte aligned");
         return;
     }
 
+    if(!is_valid_sw_breakpoint_range(addr, length)) {
+        gdb_error_with_code_str(GDB_EMEM_PROT,
+                                "Z0: invalid software breakpoint address");
+        return;
+    }
+
+    normalized_addr = normalize_cached_address(addr);
+    site = (volatile uint16_t *)normalized_addr;
+
     for(int i = 0; i < MAX_SW_BREAKPOINTS; ++i) {
-        if(sw_breakpoints[i].active && sw_breakpoints[i].addr == addr) {
+        if(sw_breakpoints[i].active &&
+           sw_breakpoints[i].addr == normalized_addr) {
             if(set) {
-                strcpy(res_buffer, GDB_OK);
+                gdb_put_ok();
             }
             else {
-                *((uint16_t *)addr) = sw_breakpoints[i].original;
-                icache_flush_range(addr, 2);
+                if(*site != GDB_SW_BREAK_OPCODE) {
+                    gdb_error_with_code_str(GDB_EBKPT_CLEAR_ID,
+                                            "z0: breakpoint site changed while active");
+                    return;
+                }
+
+                *site = sw_breakpoints[i].original;
+                icache_flush_range(normalized_addr, 2);
                 sw_breakpoints[i].active = false;
-                strcpy(res_buffer, GDB_OK);
+                gdb_put_ok();
             }
 
             return;
@@ -97,12 +139,12 @@ static void soft_breakpoint(bool set, uintptr_t addr, size_t length,
 
     for(int i = 0; i < MAX_SW_BREAKPOINTS; ++i) {
         if(!sw_breakpoints[i].active) {
-            sw_breakpoints[i].addr = addr;
-            sw_breakpoints[i].original = *((uint16_t *)addr);
+            sw_breakpoints[i].addr = normalized_addr;
+            sw_breakpoints[i].original = *site;
             sw_breakpoints[i].active = true;
-            *((uint16_t *)addr) = GDB_SW_BREAK_OPCODE;
-            icache_flush_range(addr, 2);
-            strcpy(res_buffer, GDB_OK);
+            *site = GDB_SW_BREAK_OPCODE;
+            icache_flush_range(normalized_addr, 2);
+            gdb_put_ok();
             return;
         }
     }
@@ -227,7 +269,7 @@ static void clear_hw_breakpoint_slot(hw_breakpoint_t *slot) {
    GDB watchpoint.
 */
 static void set_split_operand_watchpoint(int brk_type, uintptr_t addr,
-                                         size_t length, char *res_buffer) {
+                                         size_t length) {
     hw_breakpoint_t *low = &gdb_hw_bps[0];
     hw_breakpoint_t *high = &gdb_hw_bps[1];
 
@@ -277,7 +319,7 @@ static void set_split_operand_watchpoint(int brk_type, uintptr_t addr,
     high->primary = false;
     high->active = true;
 
-    strcpy(res_buffer, GDB_OK);
+    gdb_put_ok();
 }
 
 /*
@@ -288,7 +330,7 @@ static void set_split_operand_watchpoint(int brk_type, uintptr_t addr,
    idempotent and removals target the matching active entry.
 */
 static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
-                            size_t length, char *res_buffer) {
+                            size_t length) {
     hw_breakpoint_t *slot;
     hw_breakpoint_t *partner = NULL;
 
@@ -300,7 +342,7 @@ static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
 
     /* GDB sometimes probes address 0; do not waste a UBC channel on it. */
     if(addr == 0) {
-        strcpy(res_buffer, GDB_OK);
+        gdb_put_ok();
         return;
     }
 
@@ -334,17 +376,17 @@ static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
             clear_hw_breakpoint_slot(partner);
 
         clear_hw_breakpoint_slot(slot);
-        strcpy(res_buffer, GDB_OK);
+        gdb_put_ok();
         return;
     }
 
     if(slot) {
-        strcpy(res_buffer, GDB_OK);
+        gdb_put_ok();
         return;
     }
 
     if(needs_split_operand_watchpoint(brk_type, length)) {
-        set_split_operand_watchpoint(brk_type, addr, length, res_buffer);
+        set_split_operand_watchpoint(brk_type, addr, length);
         return;
     }
 
@@ -375,7 +417,7 @@ static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
     slot->partner = -1;
     slot->primary = true;
     slot->active = true;
-    strcpy(res_buffer, GDB_OK);
+    gdb_put_ok();
 }
 
 /*
@@ -397,14 +439,14 @@ void handle_breakpoint(char *ptr) {
     uint32_t length;
 
     if(*ptr++ == ',' && hex_to_int(&ptr, &addr) &&
-       *ptr++ == ',' && hex_to_int(&ptr, &length)) {
+       *ptr++ == ',' && hex_to_int(&ptr, &length) && *ptr == '\0') {
         if(brk_type < GDB_BRK_SW || brk_type > GDB_WATCH_RW) {
             gdb_error_with_code_str(GDB_EINVAL, "Z/z: invalid breakpoint type");
         }
         else if(brk_type == GDB_BRK_SW)
-            soft_breakpoint(set, addr, length, remcom_out_buffer);
+            soft_breakpoint(set, addr, length);
         else
-            hard_breakpoint(set, brk_type, addr, length, remcom_out_buffer);
+            hard_breakpoint(set, brk_type, addr, length);
     }
     else {
         gdb_error_with_code_str(GDB_EINVAL, "Z/z: invalid packet");

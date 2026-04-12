@@ -77,7 +77,9 @@ static void gdb_handle_exception(int exception_vector) {
             case 'X': handle_write_mem_binary(ptr); break;
             case 'c':
             case 's':
-                handle_continue_step(ptr); return;
+                if(handle_continue_step(ptr))
+                    return;
+                break;
             case 'C':
             case 'S':
                 if(handle_continue_step_signal(ptr))
@@ -105,6 +107,47 @@ irq_context_t *gdb_get_irq_context(void) {
     return irq_ctx;
 }
 
+/*
+   Enter the debugger for an already-captured exception context.
+
+   This is used when we need to stop from helper code that is already running
+   inside an exception handler, such as the stepped TRAPA shim in gdb_ctrl.c.
+*/
+void gdb_enter_exception(irq_context_t *context,
+                         int exception_vector,
+                         bool rewind_pc) {
+    irq_ctx = context;
+
+    if(rewind_pc)
+        irq_ctx->pc -= 2;
+
+    gdb_handle_exception(exception_vector);
+}
+
+/*
+   Resolve a thread selector to the register context that GDB should edit.
+
+   If the requested thread is the one currently stopped in the debugger, we
+   must use the live exception frame rather than the parked kthread context;
+   otherwise register reads and writes would not affect the state that resumes.
+*/
+irq_context_t *gdb_resolve_thread_context(int tid) {
+    irq_context_t *default_context = gdb_get_irq_context();
+
+    if(tid == GDB_THREAD_ALL || tid == GDB_THREAD_ANY)
+        return default_context;
+
+    kthread_t *target = thd_by_tid((tid_t)tid);
+
+    if(!target)
+        return default_context;
+
+    if(default_context && target == thd_get_current())
+        return default_context;
+
+    return &target->context;
+}
+
 /* Updates whether a live debugger session is currently considered connected. */
 void gdb_set_connected(bool is_connected) {
     connected = is_connected;
@@ -115,16 +158,14 @@ void gdb_set_connected(bool is_connected) {
 static void handle_exception(irq_t code, irq_context_t *context, void *data) {
     (void)data;
 
-    irq_ctx = context;
-    gdb_handle_exception(code);
+    gdb_enter_exception(context, code, false);
 }
 
 static void handle_user_trapa(irq_t code, irq_context_t *context, void *data) {
     (void)code;
     (void)data;
 
-    irq_ctx = context;
-    gdb_handle_exception(EXC_TRAPA);
+    gdb_enter_exception(context, EXC_TRAPA, false);
 }
 
 /*
@@ -138,9 +179,7 @@ static void handle_gdb_trapa(irq_t code, irq_context_t *context, void *data) {
     (void)code;
     (void)data;
 
-    irq_ctx = context;
-    irq_ctx->pc -= 2;
-    gdb_handle_exception(EXC_TRAPA);
+    gdb_enter_exception(context, EXC_TRAPA, true);
 }
 
 /*

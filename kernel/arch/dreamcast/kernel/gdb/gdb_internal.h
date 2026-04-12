@@ -80,6 +80,7 @@ char *hex_to_mem(const char *src, char *dest, size_t count);
 /* Register/Control (gdb_regs.c/gdb_ctrl.c) */
 void set_regs_thread(int tid);
 void set_ctrl_thread(int tid);
+int get_ctrl_thread(void);
 void setup_regs_context(void);
 void setup_ctrl_context(void);
 
@@ -91,15 +92,18 @@ void gdb_put_ok(void);
 void gdb_put_str(const char *msg);
 void gdb_clear_out_buffer(void);
 char *gdb_get_out_buffer(void);
+size_t gdb_get_in_packet_length(void);
 unsigned char *get_packet(void);
 void put_packet(const char *buffer);
 
 /* Misc */
 irq_context_t *gdb_get_irq_context(void);
+void gdb_enter_exception(irq_context_t *context, int exception_vector, bool rewind_pc);
+irq_context_t *gdb_resolve_thread_context(int tid);
 void gdb_set_connected(bool is_connected);
 void undo_single_step(void);
 int format_thread_id_hex(char out[9], uint32_t tid);
-char *append_regs(char *out, const irq_context_t *context);
+char *append_regs(char *out, size_t *remaining, const irq_context_t *context);
 
 /* Handlers */
 void handle_detach(void);
@@ -114,7 +118,7 @@ void handle_read_mem(char *ptr);
 void handle_write_mem(char *ptr);
 void handle_read_mem_binary(char *ptr);
 void handle_write_mem_binary(char *ptr);
-void handle_continue_step(char *ptr);
+bool handle_continue_step(char *ptr);
 bool handle_continue_step_signal(char *ptr);
 void handle_breakpoint(char *ptr);
 void handle_query(char *ptr);

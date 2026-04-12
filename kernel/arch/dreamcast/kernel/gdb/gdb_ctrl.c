@@ -20,8 +20,10 @@
    patching the computed stop location with an internal TRAPA trap.
 */
 
+#include <arch/arch.h>
 #include <arch/irq.h>
 #include <arch/cache.h>
+#include <dc/ubc.h>
 
 #include "gdb_internal.h"
 
@@ -53,31 +55,100 @@
 /* Hitachi SH processor register masks */
 #define T_BIT_MASK     0x0001
 
+typedef enum {
+    STEP_NONE = 0,
+    STEP_PATCHED_INSTR,
+    STEP_TRAPA_HANDLER,
+    STEP_UBC_POST,
+} step_kind_t;
+
 typedef struct {
     short *mem_addr;
     short old_instr;
+} step_patch_t;
+
+typedef struct {
+    irq_t code;
+    irq_cb_t original;
+} step_trapa_t;
+
+typedef struct {
+    ubc_breakpoint_t bp;
+} step_ubc_t;
+
+typedef struct {
+    step_kind_t kind;
+    step_patch_t patch;
+    step_trapa_t trapa;
+    step_ubc_t ubc;
 } step_data_t;
 
 static bool stepped;
-static step_data_t instr_buffer;
+static step_data_t step_state;
 static int32_t gdb_thread_for_ctrl = GDB_THREAD_ANY;
 static irq_context_t *ctrl_irq_ctx;
 
-static void do_single_step(void);
+static bool do_single_step(void);
+static void handle_step_trapa(irq_t code, irq_context_t *context, void *data);
+static bool handle_step_rte_break(const ubc_breakpoint_t *bp,
+                                  const irq_context_t *context,
+                                  void *data);
 
-static void resume_target(bool stepping, bool set_pc, uint32_t pc) {
+static bool resume_target(bool stepping, bool set_pc, uint32_t pc) {
     setup_ctrl_context();
 
     if(set_pc)
         ctrl_irq_ctx->pc = pc;
 
-    if(stepping)
-        do_single_step();
+    if(stepping) {
+        if(!arch_valid_text_address(ctrl_irq_ctx->pc)) {
+            gdb_error_with_code_str(GDB_EMEM_PROT, "s/S: invalid step PC");
+            return false;
+        }
+
+        if(!do_single_step())
+            return false;
+    }
+
+    return true;
+}
+
+/*
+   Trap wrapper used when single-stepping a real TRAPA instruction.
+
+   We stop once the trap has been taken but before its registered callback
+   runs. After the debugger resumes, execution continues through the original
+   handler exactly once.
+*/
+static void handle_step_trapa(irq_t code, irq_context_t *context, void *data) {
+    irq_cb_t original = step_state.trapa.original;
+
+    (void)data;
+
+    gdb_enter_exception(context, EXC_TRAPA, false);
+
+    if(original.hdl)
+        original.hdl(code, context, original.data);
+}
+
+static bool handle_step_rte_break(const ubc_breakpoint_t *bp,
+                                  const irq_context_t *context,
+                                  void *data) {
+    (void)bp;
+    (void)data;
+
+    gdb_enter_exception((irq_context_t *)context, EXC_USER_BREAK_POST, false);
+    return false;
 }
 
 /* Sets the target thread for control operations (continue/step). */
 void set_ctrl_thread(int tid) {
     gdb_thread_for_ctrl = tid;
+}
+
+/* Returns the current thread selector used for control operations. */
+int get_ctrl_thread(void) {
+    return gdb_thread_for_ctrl;
 }
 
 /*
@@ -86,16 +157,7 @@ void set_ctrl_thread(int tid) {
    exists, it falls back to the interrupted thread's current context.
 */
 void setup_ctrl_context(void) {
-    irq_context_t *default_context = gdb_get_irq_context();
-
-    if(gdb_thread_for_ctrl == GDB_THREAD_ALL ||
-       gdb_thread_for_ctrl == GDB_THREAD_ANY) {
-        ctrl_irq_ctx = default_context;
-        return;
-    }
-
-    kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_ctrl);
-    ctrl_irq_ctx = target ? &target->context : default_context;
+    ctrl_irq_ctx = gdb_resolve_thread_context(gdb_thread_for_ctrl);
 }
 
 /*
@@ -103,17 +165,17 @@ void setup_ctrl_context(void) {
    address with a TRAPA. Branches, delay slots, returns, and TRAPA opcodes are
    decoded so the trap lands where execution would naturally continue.
 */
-static void do_single_step(void) {
+static bool do_single_step(void) {
     short *instr_mem;
     int displacement;
     int reg;
     unsigned short opcode, br_opcode;
 
-    stepped = true;
     setup_ctrl_context();
     instr_mem = (short *)ctrl_irq_ctx->pc;
     opcode = *instr_mem;
     br_opcode = opcode & COND_BR_MASK;
+    step_state.kind = STEP_PATCHED_INSTR;
 
     if(br_opcode == BT_INSTR || br_opcode == BTS_INSTR) {
         if(ctrl_irq_ctx->sr & T_BIT_MASK) {
@@ -170,17 +232,40 @@ static void do_single_step(void) {
     }
     else if(opcode == RTS_INSTR)
         instr_mem = (short *)ctrl_irq_ctx->pr;
-    else if(opcode == RTE_INSTR)
-        instr_mem = (short *)ctrl_irq_ctx->r[15];
-    else if((opcode & TRAPA_MASK) == TRAPA_INSTR)
-        instr_mem = (short *)((opcode & ~TRAPA_MASK) << 2);
+    else if(opcode == RTE_INSTR) {
+        memset(&step_state.ubc.bp, 0, sizeof(step_state.ubc.bp));
+        step_state.kind = STEP_UBC_POST;
+        step_state.ubc.bp.address = (void *)ctrl_irq_ctx->pc;
+        step_state.ubc.bp.access = ubc_access_instruction;
+        step_state.ubc.bp.instruction.break_before = false;
+
+        if(!ubc_add_breakpoint(&step_state.ubc.bp, handle_step_rte_break, NULL)) {
+            step_state.kind = STEP_NONE;
+            gdb_error_with_code_str(GDB_EBKPT_HW_NORES,
+                                    "s/S: unable to arm RTE post-step breakpoint");
+            return false;
+        }
+
+        stepped = true;
+        return true;
+    }
+    else if((opcode & TRAPA_MASK) == TRAPA_INSTR) {
+        step_state.kind = STEP_TRAPA_HANDLER;
+        step_state.trapa.code = IRQ_TRAP_CODE(opcode & COND_DISP);
+        step_state.trapa.original = irq_get_handler(step_state.trapa.code);
+        irq_set_handler(step_state.trapa.code, handle_step_trapa, NULL);
+        stepped = true;
+        return true;
+    }
     else
         instr_mem += 1;
 
-    instr_buffer.mem_addr = instr_mem;
-    instr_buffer.old_instr = *instr_mem;
+    step_state.patch.mem_addr = instr_mem;
+    step_state.patch.old_instr = *instr_mem;
     *instr_mem = SSTEP_INSTR;
     icache_flush_range((uint32_t)instr_mem, 2);
+    stepped = true;
+    return true;
 }
 
 /*
@@ -189,13 +274,24 @@ static void do_single_step(void) {
 */
 void undo_single_step(void) {
     if(stepped) {
-        short *instr_mem;
-        instr_mem = instr_buffer.mem_addr;
-        *instr_mem = instr_buffer.old_instr;
-        icache_flush_range((uint32_t)instr_mem, 2);
+        if(step_state.kind == STEP_PATCHED_INSTR) {
+            short *instr_mem = step_state.patch.mem_addr;
+
+            *instr_mem = step_state.patch.old_instr;
+            icache_flush_range((uint32_t)instr_mem, 2);
+        }
+        else if(step_state.kind == STEP_TRAPA_HANDLER) {
+            irq_set_handler(step_state.trapa.code,
+                            step_state.trapa.original.hdl,
+                            step_state.trapa.original.data);
+        }
+        else if(step_state.kind == STEP_UBC_POST) {
+            ubc_remove_breakpoint(&step_state.ubc.bp);
+        }
     }
 
     stepped = false;
+    memset(&step_state, 0, sizeof(step_state));
 }
 
 /*
@@ -215,12 +311,17 @@ void undo_single_step(void) {
    control thread's PC, and resumes that thread. If single-stepping, it
    prepares the computed next stop location for trapping.
 */
-void handle_continue_step(char *ptr) {
+bool handle_continue_step(char *ptr) {
     bool stepping = (ptr[-1] == 's');
     uint32_t addr = 0;
     bool set_pc = hex_to_int(&ptr, &addr) != 0;
 
-    resume_target(stepping, set_pc, addr);
+    if(*ptr != '\0') {
+        gdb_error_with_code_str(GDB_EINVAL, "c/s: invalid packet");
+        return false;
+    }
+
+    return resume_target(stepping, set_pc, addr);
 }
 
 /*
@@ -268,8 +369,7 @@ bool handle_continue_step_signal(char *ptr) {
 
     /* SH4 does not use the supplied signal value here. */
     (void)signal;
-    resume_target(stepping, set_pc, addr);
-    return true;
+    return resume_target(stepping, set_pc, addr);
 }
 
 /*

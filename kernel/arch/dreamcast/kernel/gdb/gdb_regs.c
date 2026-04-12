@@ -70,19 +70,14 @@ void set_regs_thread(int tid) {
     gdb_thread_for_regs = tid;
 }
 
-/* Selects the appropriate IRQ context for the current register thread. */
+/*
+   Selects the appropriate IRQ context for the current register thread.
+
+   When the selected thread is the one currently stopped in the debugger, this
+   must use the live exception frame rather than the dormant kthread context.
+*/
 void setup_regs_context(void) {
-    irq_context_t *default_context = gdb_get_irq_context();
-
-    if(gdb_thread_for_regs == GDB_THREAD_ALL ||
-       gdb_thread_for_regs == GDB_THREAD_ANY) {
-        regs_irq_ctx = default_context;
-        return;
-    }
-
-    kthread_t *target = thd_by_tid((tid_t)gdb_thread_for_regs);
-
-    regs_irq_ctx = target ? &target->context : default_context;
+    regs_irq_ctx = gdb_resolve_thread_context(gdb_thread_for_regs);
 }
 
 /* Packs two FR register words into one pseudo double register (drN). */
@@ -106,14 +101,23 @@ static void build_fv(uint32_t fv[4], const irq_context_t *context, int base) {
      - vvvvvvvv: value encoded in hex (endianness-respecting)
      - Ends with a semicolon
 
-   Returns pointer to the end of the output buffer.
+   Returns pointer to the end of the output buffer, or NULL if the full field
+   would not fit in the remaining space.
 */
-static char *append_reg(char *out, int regnum, const void *value, size_t size) {
+static char *append_reg(char *out, size_t *remaining, int regnum,
+                        const void *value, size_t size) {
+    size_t needed = 2u + 1u + (size * 2u) + 1u;
+
+    if(!remaining || (needed + 1u) > *remaining)
+        return NULL;
+
     *out++ = highhex(regnum);
     *out++ = lowhex(regnum);
     *out++ = ':';
     out = mem_to_hex((const char *)value, out, size);
     *out++ = ';';
+    *out = '\0';
+    *remaining -= needed;
 
     return out;
 }
@@ -128,13 +132,20 @@ static char *append_reg(char *out, int regnum, const void *value, size_t size) {
 
    Does not include unavailable raw g/G slots or pseudo registers.
 
-   Returns a pointer to the end of the output buffer.
+   Returns a pointer to the end of the output buffer. If the buffer fills up,
+   only complete register fields are emitted and the reply remains
+   null-terminated.
 */
-char *append_regs(char *out, const irq_context_t *context) {
+char *append_regs(char *out, size_t *remaining, const irq_context_t *context) {
     for(int i = 0; i < BASE_REG_COUNT; ++i) {
         const uint32_t *reg_ptr =
             (const uint32_t *)((uintptr_t)context + kos_reg_map[i]);
-        out = append_reg(out, i, reg_ptr, sizeof(*reg_ptr));
+        char *next = append_reg(out, remaining, i, reg_ptr, sizeof(*reg_ptr));
+
+        if(!next)
+            break;
+
+        out = next;
     }
 
     return out;
@@ -143,6 +154,44 @@ char *append_regs(char *out, const irq_context_t *context) {
 static char *append_zero_reg_hex(char *out) {
     static const uint32_t zero;
     return mem_to_hex((const char *)&zero, out, sizeof(zero));
+}
+
+static bool hex_to_mem_checked_n(const char *src, void *dest, size_t count) {
+    unsigned char *out = (unsigned char *)dest;
+
+    if(!src || !dest)
+        return false;
+
+    for(size_t i = 0; i < count; ++i) {
+        int high = hex(src[(i * 2u)]);
+        int low = hex(src[(i * 2u) + 1u]);
+
+        if(high < 0 || low < 0)
+            return false;
+
+        out[i] = (unsigned char)((high << 4) | low);
+    }
+
+    return true;
+}
+
+static bool parse_register_hex_exact(const char *in, void *out, size_t size) {
+    if(!in || in[size * 2u] != '\0')
+        return false;
+
+    return hex_to_mem_checked_n(in, out, size);
+}
+
+static bool validate_hex_span(const char *in, size_t hex_chars) {
+    if(!in)
+        return false;
+
+    for(size_t i = 0; i < hex_chars; ++i) {
+        if(hex(in[i]) < 0)
+            return false;
+    }
+
+    return in[hex_chars] == '\0';
 }
 
 static bool read_register_hex(char *out, int regnum) {
@@ -199,6 +248,7 @@ static bool read_register_hex(char *out, int regnum) {
 
 static bool write_register_hex(int regnum, const char *in) {
     irq_context_t *context;
+    uint32_t value32;
 
     if(regnum < 0)
         return false;
@@ -207,19 +257,26 @@ static bool write_register_hex(int regnum, const char *in) {
     context = regs_irq_ctx;
 
     if(regnum < BASE_REG_COUNT) {
-        hex_to_mem(in, (char *)((uintptr_t)context + kos_reg_map[regnum]), 4);
+        if(!parse_register_hex_exact(in, &value32, sizeof(value32)))
+            return false;
+
+        *(uint32_t *)((uintptr_t)context + kos_reg_map[regnum]) = value32;
         return true;
     }
 
     regnum -= BASE_REG_COUNT;
 
-    if(regnum < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT)
-        return true;
+    if(regnum < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT) {
+        uint32_t ignored;
+        return parse_register_hex_exact(in, &ignored, sizeof(ignored));
+    }
 
     regnum -= UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT;
 
-    if(regnum == 0)
-        return true;
+    if(regnum == 0) {
+        uint32_t ignored;
+        return parse_register_hex_exact(in, &ignored, sizeof(ignored));
+    }
 
     --regnum;
 
@@ -227,7 +284,9 @@ static bool write_register_hex(int regnum, const char *in) {
         int base = regnum * 2;
         uint64_t dr = 0;
 
-        hex_to_mem(in, (char *)&dr, sizeof(dr));
+        if(!parse_register_hex_exact(in, &dr, sizeof(dr)))
+            return false;
+
         context->fr[base] = (uint32_t)(dr & 0xffffffffu);
         context->fr[base + 1] = (uint32_t)(dr >> 32);
         return true;
@@ -239,7 +298,9 @@ static bool write_register_hex(int regnum, const char *in) {
         int base = regnum * 4;
         uint32_t fv[4];
 
-        hex_to_mem(in, (char *)fv, sizeof(fv));
+        if(!parse_register_hex_exact(in, fv, sizeof(fv)))
+            return false;
+
         for(int i = 0; i < 4; i++)
             context->fr[base + i] = fv[i];
         return true;
@@ -298,7 +359,7 @@ void handle_read_regs(char *ptr) {
     context = regs_irq_ctx;
 
     for(int i = 0; i < BASE_REG_COUNT; i++)
-        out = mem_to_hex((char *)((uint32_t)context + kos_reg_map[i]), out, 4);
+        out = mem_to_hex((char *)((uintptr_t)context + kos_reg_map[i]), out, 4);
 
     for(int i = 0; i < UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT; i++)
         out = append_zero_reg_hex(out);
@@ -315,6 +376,7 @@ void handle_read_regs(char *ptr) {
 void handle_write_regs(char *ptr) {
     char *in = ptr;
     size_t remaining = strlen(in);
+    uint32_t values[BASE_REG_COUNT];
     irq_context_t *context;
 
     if(remaining < (size_t)RAW_REG_COUNT * 8) {
@@ -322,11 +384,23 @@ void handle_write_regs(char *ptr) {
         return;
     }
 
+    if(!validate_hex_span(in, (size_t)RAW_REG_COUNT * 8u)) {
+        gdb_error_with_code_str(GDB_EINVAL, "G: invalid register payload");
+        return;
+    }
+
     setup_regs_context();
     context = regs_irq_ctx;
 
-    for(int i = 0; i < BASE_REG_COUNT; i++, in += 8)
-        hex_to_mem(in, (char *)((uint32_t)context + kos_reg_map[i]), 4);
+    for(int i = 0; i < BASE_REG_COUNT; i++, in += 8) {
+        if(!hex_to_mem_checked_n(in, &values[i], sizeof(values[i]))) {
+            gdb_error_with_code_str(GDB_EINVAL, "G: invalid register payload");
+            return;
+        }
+    }
+
+    for(int i = 0; i < BASE_REG_COUNT; ++i)
+        *(uint32_t *)((uintptr_t)context + kos_reg_map[i]) = values[i];
 
     in += (UNAVAILABLE_REG_COUNT + RESERVED_REG_COUNT) * 8;
 

@@ -20,6 +20,7 @@
 */
 
 #include <stdio.h>
+#include <inttypes.h>
 
 #include <kos/thread.h>
 
@@ -56,6 +57,19 @@ static size_t tls_static_data_offset(void) {
     return align_to(sizeof(gdb_tcbhead_t), align);
 }
 
+static bool match_exact_query(const char *ptr, const char *query) {
+    return strcmp(ptr, query) == 0;
+}
+
+static bool match_query_with_optional_suffix(const char *ptr,
+                                             const char *query,
+                                             char suffix_sep) {
+    size_t len = strlen(query);
+
+    return strncmp(ptr, query, len) == 0 &&
+           (ptr[len] == '\0' || ptr[len] == suffix_sep);
+}
+
 static void parse_qsupported_features(const char *features) {
     const char *ptr = features;
 
@@ -84,7 +98,7 @@ static int append_thread_id(kthread_t *thd, void *user_data) {
     if(len < 0)
         return -1;
 
-    if(state->remaining <= (size_t)len + (state->first ? 1u : 2u))
+    if(state->remaining < (size_t)len + (state->first ? 1u : 2u))
         return -1;
 
     if(!state->first) {
@@ -145,7 +159,7 @@ void handle_query(char *ptr) {
        Format: qTStatus
        Response: Empty means no pending stop.
     */
-    if(strncmp(ptr, "TStatus", 7) == 0) {
+    if(match_exact_query(ptr, "TStatus")) {
         gdb_clear_out_buffer();
         return;
     }
@@ -155,7 +169,7 @@ void handle_query(char *ptr) {
        Format: qOffsets
        Response: Text=ADDR;Data=ADDR;Bss=ADDR
     */
-    if(strncmp(ptr, "Offsets", 7) == 0) {
+    if(match_exact_query(ptr, "Offsets")) {
         gdb_put_str("Text=0;Data=0;Bss=0");
         return;
     }
@@ -165,7 +179,7 @@ void handle_query(char *ptr) {
        Format: qAttached
        This stub always reports "1".
     */
-    if(strncmp(ptr, "Attached", 8) == 0) {
+    if(match_exact_query(ptr, "Attached")) {
         gdb_put_str("1");
         return;
     }
@@ -174,7 +188,7 @@ void handle_query(char *ptr) {
        GDB sends this to initiate or continue symbol lookup negotiation.
        This stub does not request any symbols and simply replies "OK".
     */
-    if(strncmp(ptr, "Symbol", 6) == 0) {
+    if(match_query_with_optional_suffix(ptr, "Symbol", ':')) {
         gdb_put_ok();
         return;
     }
@@ -184,7 +198,7 @@ void handle_query(char *ptr) {
        Format: qC
        Response: QC<thread-id> where the thread ID is an unpadded hex value.
     */
-    if(*ptr == 'C') {
+    if(match_exact_query(ptr, "C")) {
         kthread_t *thd = thd_get_current();
 
         remcom_out_buffer[0] = 'Q';
@@ -197,7 +211,7 @@ void handle_query(char *ptr) {
        Format: qfThreadInfo
        Response: m<thread-id>[,<thread-id>...]
     */
-    if(strncmp(ptr, "fThreadInfo", 11) == 0) {
+    if(match_exact_query(ptr, "fThreadInfo")) {
         thread_list_state_t state;
 
         remcom_out_buffer[0] = 'm';
@@ -222,7 +236,7 @@ void handle_query(char *ptr) {
        responses. If the initial qfThreadInfo reply succeeds, qsThreadInfo
        always returns 'l' to indicate the end of the list.
     */
-    if(strncmp(ptr, "sThreadInfo", 11) == 0) {
+    if(match_exact_query(ptr, "sThreadInfo")) {
         strcpy(remcom_out_buffer, "l");
         return;
     }
@@ -291,8 +305,8 @@ void handle_query(char *ptr) {
             if(thd && thd->tls_hnd) {
                 uintptr_t tls_addr =
                     (uintptr_t)thd->tls_hnd + tls_static_data_offset() + offset;
-                mem_to_hex((const char *)&tls_addr, remcom_out_buffer,
-                           sizeof(tls_addr));
+                snprintf(remcom_out_buffer, BUFMAX, "%0*" PRIxPTR,
+                         (int)(sizeof(tls_addr) * 2u), tls_addr);
             }
             else {
                 gdb_error_with_code_str(GDB_EINVAL,
@@ -320,7 +334,7 @@ void handle_query(char *ptr) {
    QStartNoAckMode enables no-ack mode and replies "OK".
 */
 void handle_set_query(char *ptr) {
-    if(strncmp(ptr, "StartNoAckMode", 14) == 0) {
+    if(match_exact_query(ptr, "StartNoAckMode")) {
         set_no_ack_mode_enabled(true);
         gdb_put_ok();
     }
