@@ -119,6 +119,7 @@ static bool append_reason_field(char **out, size_t *remaining,
 */
 void handle_detach(void) {
     put_packet(GDB_OK);
+    set_no_ack_mode_enabled(false);
     gdb_set_connected(false);
 }
 

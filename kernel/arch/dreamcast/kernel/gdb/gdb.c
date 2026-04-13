@@ -28,7 +28,7 @@
 
 #include "gdb_internal.h"
 
-/* TRAPA #0x20: internal single-step or resume */
+/* TRAPA #0x20: internal single-step trap */
 #define TRAPA_GDB_SINGLESTEP 32
 
 /* TRAPA #0x3F: GDB-inserted software breakpoints (Z0) */
@@ -45,7 +45,7 @@ static bool connected;
    Main GDB exception handler.
 
    Builds the initial stop reply for the current exception, then services
-   remote packets until execution is resumed or the debugger detaches/kills
+   remote packets until execution is resumed or the debugger detaches or kills
    the target.
 */
 static void gdb_handle_exception(int exception_vector) {
@@ -190,24 +190,6 @@ static void handle_gdb_trapa(irq_t code, irq_context_t *context, void *data) {
 */
 void gdb_breakpoint(void) {
     __asm__("trapa	#0xff"::);
-}
-
-/*
-   Send a Wxx exit packet when a debugger is connected.
-
-   This is only emitted after gdb_init() has run and the stub has seen at
-   least one live debugger session.
-*/
-void gdb_shutdown(int status) {
-    char *out;
-
-    if(!initialized || !connected)
-        return;
-
-    out = gdb_get_out_buffer();
-    snprintf(out, BUFMAX, "W%02x", status & 0xff);
-    put_packet(out);
-    connected = false;
 }
 
 /*

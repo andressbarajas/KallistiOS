@@ -16,8 +16,11 @@
      - Cxx / Sxx     : continue and single-step with signal
      - Hg / Hc       : select threads for register or execution control
 
-   Single-step is implemented by decoding the next SH4 instruction and
-   patching the computed stop location with an internal TRAPA trap.
+   Single-step is usually implemented by decoding the next SH4 instruction and
+   patching the computed stop location with an internal TRAPA trap. Two
+   special cases use different machinery: stepping a real TRAPA installs a
+   temporary trap-handler shim, and stepping RTE uses a post-instruction UBC
+   breakpoint because control resumes through the saved exception-return state.
 */
 
 #include <arch/arch.h>
@@ -131,6 +134,13 @@ static void handle_step_trapa(irq_t code, irq_context_t *context, void *data) {
         original.hdl(code, context, original.data);
 }
 
+/*
+   UBC callback used when single-stepping an RTE instruction.
+
+   The breakpoint is armed on the RTE itself with break-after semantics, so
+   this callback only runs after exception return has restored the frame that
+   execution resumes from.
+*/
 static bool handle_step_rte_break(const ubc_breakpoint_t *bp,
                                   const irq_context_t *context,
                                   void *data) {
@@ -161,9 +171,13 @@ void setup_ctrl_context(void) {
 }
 
 /*
-   Prepares for single-step execution by patching the computed next stop
-   address with a TRAPA. Branches, delay slots, returns, and TRAPA opcodes are
-   decoded so the trap lands where execution would naturally continue.
+   Prepares for single-step execution.
+
+   Most instructions are stepped by patching the computed next stop address
+   with an internal TRAPA. Branches, delay slots, and returns are decoded so
+   the trap lands where execution would naturally continue. Real TRAPA
+   instructions and RTE are handled specially, because neither case can be
+   modeled safely by simply overwriting the next instruction word.
 */
 static bool do_single_step(void) {
     short *instr_mem;
@@ -269,8 +283,10 @@ static bool do_single_step(void) {
 }
 
 /*
-   Undo the effect of a previous do_single_step.  If we single stepped,
-   restore the old instruction.
+   Undo whichever helper state was armed for the previous single-step.
+
+   Depending on the step kind, this restores the patched instruction, removes
+   the temporary TRAPA wrapper, or disarms the UBC post-step breakpoint.
 */
 void undo_single_step(void) {
     if(stepped) {

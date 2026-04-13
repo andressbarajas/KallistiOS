@@ -13,12 +13,12 @@
 
    This module provides:
      - g / G access to the raw SH4 register block expected by GDB
-     - p / P access to individual raw and pseudo registers
+     - p / P access to individual raw registers and the implemented pseudo registers
      - register formatting for T stop replies
      - thread-selected register contexts via Hg packets
 
-   Pseudo registers such as drN and fvN are handled through single-register
-   access rather than the bulk g/G packet stream.
+   Bulk g/G packets cover only the raw SH4 register block. Implemented pseudo
+   registers such as drN and fvN are available through single-register access.
 */
 
 #include "gdb_internal.h"
@@ -46,8 +46,8 @@ uint32_t kos_reg_map[] = {
 
 /*
    GDB's raw SH4 remote register block is 67 32-bit registers:
-     - 41 directly readable registers we map from irq_context_t
-     - 18 unavailable raw slots for ssr/spc and banked r0-r7 values
+     - 41 directly mapped registers we expose from irq_context_t
+     - 18 unavailable raw slots for ssr, spc, and banked r0-r7 values
      - 8 reserved blank raw slots
 
    Pseudo registers like dr0-dr14 and fv0-fv12 are not part of the g/G block.
@@ -347,7 +347,7 @@ void handle_write_reg(char *ptr) {
    Handle the 'g' command.
    Returns the full raw SH4 g/G register block expected by GDB.
    This includes the mapped base registers plus zero-filled unavailable and
-   reserved slots.
+   reserved raw slots; pseudo registers are not part of the bulk packet.
 */
 void handle_read_regs(char *ptr) {
     (void)ptr;
@@ -371,7 +371,7 @@ void handle_read_regs(char *ptr) {
    Handle the 'G' command.
    Consumes the full raw SH4 g/G register block supplied by GDB.
    Only the mapped base registers are written back to irq_context_t;
-   unavailable and reserved slots are accepted and ignored.
+   unavailable and reserved raw slots are accepted and ignored.
 */
 void handle_write_regs(char *ptr) {
     char *in = ptr;

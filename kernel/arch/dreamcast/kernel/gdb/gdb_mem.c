@@ -15,10 +15,10 @@
      - m / M : hexadecimal memory reads and writes
      - x / X : binary memory reads and writes
 
-   The handlers heuristically validate accessible ranges using KOS address
-   helpers, escape outbound binary replies and unescape inbound binary payloads
-   as required by RSP, and flush the instruction cache after writes that may
-   affect code.
+   The handlers reject P4 SH-internal space, heuristically validate other
+   ranges using KOS address helpers, escape outbound binary replies and
+   unescape inbound binary payloads as required by RSP, and flush the
+   instruction cache after writes that may affect code.
 */
 
 #include <arch/arch.h>

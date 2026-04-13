@@ -7,11 +7,11 @@
 */
 
 /*
-    This header defines internal structures, macros, and utility functions
-    used throughout the GDB remote stub implementation. It includes
-    definitions for communication buffers, error codes, register/context
-    handling, and packet management. These interfaces are intended for use
-    only within the GDB stub implementation and are not part of the public API.
+   This header defines internal structures, macros, and utility functions used
+   throughout the GDB remote stub implementation. It includes definitions for
+   communication buffers, error codes, register/context handling, and packet
+   management. These interfaces are intended for use only within the GDB stub
+   implementation and are not part of the public API.
 */
 
 #pragma once
@@ -28,7 +28,7 @@
 extern int using_dcl;
 extern char remcom_out_buffer[];
 
-/* BUFMAX defines the maximum number of characters in inbound/outbound buffers */
+/* Total inbound/outbound packet-buffer capacity, including framing workspace. */
 #define BUFMAX            1024
 
 #define GDB_OK            "OK"

@@ -308,8 +308,6 @@ void arch_main(void) {
     /* Call the user's main function */
     rv = main(0, NULL);
 
-    gdb_shutdown(rv);
-
     /* Call kernel exit */
     exit(rv);
 }

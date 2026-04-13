@@ -16,7 +16,7 @@
      - vCont;{c,s}[:thread-id][;...]
      - vMustReplyEmpty
      - vCtrlC
-     - vKill
+     - vKill[;pid]
 */
 
 #include <arch/arch.h>
@@ -103,8 +103,9 @@ static bool run_vcont_action(const vcont_action_t *action) {
 
    This all-stop stub supports the common subset that GDB uses for threaded
    resume control: continue/step actions, optional thread qualifiers, and
-   mixed packets such as 'vCont;s:tid;c'. More complex vCont actions still
-   return an unsupported-feature error.
+   mixed packets such as 'vCont;s:tid;c'. The packet is reduced to one action:
+   a step action takes precedence, otherwise the first continue action is used.
+   More complex vCont actions still return an unsupported-feature error.
 */
 static bool handle_vcont(char *ptr) {
     vcont_action_t selected = { 0 };
@@ -169,7 +170,7 @@ static bool handle_vcont(char *ptr) {
      - vCont;{c,s}...  → Thread-qualified/multi-action continue or step
      - vMustReplyEmpty → Acknowledge empty reply support
      - vCtrlC         → Reboot the target after acknowledging the packet
-     - vKill          → Abort execution
+     - vKill[;pid]    → Abort execution; an optional pid suffix is accepted and ignored
 */
 bool handle_v_packet(char *ptr) {
     if(strcmp(ptr, "Cont?") == 0 || strncmp(ptr, "Cont;", 5) == 0)

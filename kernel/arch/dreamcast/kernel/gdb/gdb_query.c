@@ -9,7 +9,7 @@
 /*
    Implements GDB query and set-query packet handling.
 
-   Supported queries include:
+   Supported query/set-query packets include:
      - qSupported, qTStatus, qOffsets, qAttached, qSymbol
      - qC, qfThreadInfo, qsThreadInfo, qThreadExtraInfo
      - qGetTLSAddr
@@ -138,6 +138,10 @@ void handle_query(char *ptr) {
        Handle the 'qSupported' command.
        Negotiates optional protocol features and reports the capabilities
        supported by this stub.
+
+       PacketSize reports the maximum payload bytes this stub accepts in a
+       framed packet, not the total on-wire size including '$', '#', and the
+       checksum bytes.
     */
     if(strncmp(ptr, "Supported:", 10) == 0) {
         parse_qsupported_features(ptr + 10);
@@ -186,7 +190,8 @@ void handle_query(char *ptr) {
     /*
        Handle the 'qSymbol' command.
        GDB sends this to initiate or continue symbol lookup negotiation.
-       This stub does not request any symbols and simply replies "OK".
+       This stub does not request any symbols and simply replies "OK" for the
+       exact qSymbol packet and for qSymbol:<payload> continuation packets.
     */
     if(match_query_with_optional_suffix(ptr, "Symbol", ':')) {
         gdb_put_ok();
@@ -285,9 +290,12 @@ void handle_query(char *ptr) {
        Returns the address of a TLS variable for a specific thread.
        Format: qGetTLSAddr:TID,OFFSET,LMID
         - TID: Thread ID
-        - OFFSET: Offset from the base of TLS block
+        - OFFSET: Offset within the thread's static TLS data block
         - LMID: Link map ID (ignored in KOS)
        Response: hex-encoded target address of the requested TLS location
+
+       KOS computes this as the thread's TLS handle plus the static TLS data
+       offset that follows the local TCB header.
     */
     if(strncmp(ptr, "GetTLSAddr:", 11) == 0) {
         uint32_t tid = 0;
