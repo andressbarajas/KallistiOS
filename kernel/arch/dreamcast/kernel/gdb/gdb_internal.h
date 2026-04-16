@@ -80,9 +80,9 @@ char *hex_to_mem(const char *src, char *dest, size_t count);
 /* Register/Control (gdb_regs.c/gdb_ctrl.c) */
 void set_regs_thread(int tid);
 void set_ctrl_thread(int tid);
-int get_ctrl_thread(void);
 void setup_regs_context(void);
 void setup_ctrl_context(void);
+bool gdb_resume_target(bool stepping, bool set_pc, uint32_t pc);
 
 /* Packet (gdb_packet.c) */
 void set_error_messages_enabled(bool enabled);
@@ -118,8 +118,8 @@ void handle_read_mem(char *ptr);
 void handle_write_mem(char *ptr);
 void handle_read_mem_binary(char *ptr);
 void handle_write_mem_binary(char *ptr);
-bool handle_continue_step(char *ptr);
-bool handle_continue_step_signal(char *ptr);
+bool handle_continue_step(char command, char *ptr);
+bool handle_continue_step_signal(char command, char *ptr);
 void handle_breakpoint(char *ptr);
 void handle_query(char *ptr);
 void handle_set_query(char *ptr);

@@ -13,7 +13,7 @@
      - vCont?      : advertise supported vCont actions
      - vCont;c     : continue execution
      - vCont;s     : single-step execution
-     - vCont;{c,s}[:thread-id][;...]
+     - vCont;{c,s}[:thread-id] for the currently stopped thread only
      - vMustReplyEmpty
      - vCtrlC
      - vKill[;pid]
@@ -29,6 +29,20 @@ typedef struct {
     bool has_thread;
 } vcont_action_t;
 
+/* Returns whether a vCont thread selector can target the currently stopped thread. */
+static bool is_supported_vcont_thread(int tid) {
+    kthread_t *current = thd_get_current();
+
+    if(tid == GDB_THREAD_ANY || tid == GDB_THREAD_ALL)
+        return true;
+
+    if(!current || tid <= GDB_THREAD_ANY)
+        return false;
+
+    return current->tid == (tid_t)tid;
+}
+
+/* Parses a vCont thread-id suffix into one of the stub's thread selectors. */
 static bool parse_vcont_thread_id(char *ptr, int *tid) {
     uint32_t parsed_tid = 0;
 
@@ -48,8 +62,9 @@ static bool parse_vcont_thread_id(char *ptr, int *tid) {
     return true;
 }
 
+/* Parses one vCont action token such as c, s, or s:thread-id. */
 static bool parse_vcont_action(char *token, vcont_action_t *action) {
-    memset(action, 0, sizeof(*action));
+    memset(action, 0, sizeof(vcont_action_t));
     action->tid = GDB_THREAD_ANY;
 
     if(*token == '\0') {
@@ -77,52 +92,31 @@ static bool parse_vcont_action(char *token, vcont_action_t *action) {
         return false;
     }
 
+    if(!is_supported_vcont_thread(action->tid)) {
+        gdb_error_with_code_str(GDB_EUNIMPL,
+                                "vCont: non-current thread execution unsupported");
+        return false;
+    }
+
     action->has_thread = true;
     return true;
 }
 
-static bool run_vcont_action(const vcont_action_t *action) {
-    int saved_tid = get_ctrl_thread();
-    char command[] = "c";
-    bool resumed;
-
-    if(action->has_thread)
-        set_ctrl_thread(action->tid);
-
-    command[0] = action->type;
-    resumed = handle_continue_step(command + 1);
-
-    if(action->has_thread)
-        set_ctrl_thread(saved_tid);
-
-    return resumed;
-}
-
 /*
-   Processes GDB 'vCont' subcommands.
+   Handle the action list from a 'vCont;...' packet.
 
-   This all-stop stub supports the common subset that GDB uses for threaded
-   resume control: continue/step actions, optional thread qualifiers, and
-   mixed packets such as 'vCont;s:tid;c'. The packet is reduced to one action:
-   a step action takes precedence, otherwise the first continue action is used.
-   More complex vCont actions still return an unsupported-feature error.
+   This all-stop stub accepts at most one continue or single-step action per
+   packet. Optional thread qualifiers are honored only when they resolve to
+   the currently stopped thread (or the equivalent any/all selectors), so the
+   stub does not pretend to support scheduler-aware multi-thread resume.
 */
-static bool handle_vcont(char *ptr) {
+static bool handle_vcont_actions(char *ptr) {
     vcont_action_t selected = { 0 };
     bool have_selected = false;
+    int action_count = 0;
     char *action;
 
-    if(strcmp(ptr, "Cont?") == 0) {
-        gdb_put_str("vCont;c;s");
-        return false;
-    }
-
-    if(strncmp(ptr, "Cont;", 5) != 0) {
-        gdb_error_with_code_str(GDB_EUNIMPL, "vCont: unsupported action");
-        return false;
-    }
-
-    action = ptr + 5;
+    action = ptr;
 
     while(action) {
         vcont_action_t parsed;
@@ -134,21 +128,14 @@ static bool handle_vcont(char *ptr) {
         if(!parse_vcont_action(action, &parsed))
             return false;
 
-        if(parsed.type == 's') {
-            if(have_selected && selected.type == 's') {
-                gdb_error_with_code_str(GDB_EUNIMPL,
-                                        "vCont: multiple step actions unsupported");
-                return false;
-            }
-
-            selected = parsed;
-            have_selected = true;
-        }
-        else if(!have_selected) {
-            selected = parsed;
-            have_selected = true;
+        if(++action_count > 1) {
+            gdb_error_with_code_str(GDB_EUNIMPL,
+                                    "vCont: multiple actions unsupported");
+            return false;
         }
 
+        selected = parsed;
+        have_selected = true;
         action = next;
     }
 
@@ -157,24 +144,26 @@ static bool handle_vcont(char *ptr) {
         return false;
     }
 
-    return run_vcont_action(&selected);
+    return gdb_resume_target(selected.type == 's', false, 0);
 }
 
 /*
-   Handle GDB 'v' packets for extended operations.
+   Handle supported extended 'v' packets.
 
-   Supported subcommands:
-     - vCont?          → Report supported actions ('c' and 's')
-     - vCont;c         → Continue execution
-     - vCont;s         → Step one instruction
-     - vCont;{c,s}...  → Thread-qualified/multi-action continue or step
-     - vMustReplyEmpty → Acknowledge empty reply support
-     - vCtrlC         → Reboot the target after acknowledging the packet
-     - vKill[;pid]    → Abort execution; an optional pid suffix is accepted and ignored
+   This dispatcher implements vCont, vMustReplyEmpty, vCtrlC, and vKill[;pid].
+   Unsupported optional 'v' packets fall back to an empty reply, which is the
+   normal RSP way to say that an extension is not implemented. Packets that
+   reboot or kill the target do not return to the normal packet-processing
+   loop.
 */
 bool handle_v_packet(char *ptr) {
-    if(strcmp(ptr, "Cont?") == 0 || strncmp(ptr, "Cont;", 5) == 0)
-        return handle_vcont(ptr);
+    if(strcmp(ptr, "Cont?") == 0) {
+        gdb_put_str("vCont;c;s");
+        return false;
+    }
+
+    if(strncmp(ptr, "Cont;", 5) == 0)
+        return handle_vcont_actions(ptr + 5);
 
     if(strcmp(ptr, "CtrlC") == 0) {
         put_packet(GDB_OK);

@@ -29,15 +29,15 @@
 #include "gdb_internal.h"
 
 /* TRAPA #0x20: internal single-step trap */
-#define TRAPA_GDB_SINGLESTEP 32
+#define TRAPA_GDB_SINGLESTEP  32
 
 /* TRAPA #0x3F: GDB-inserted software breakpoints (Z0) */
-#define TRAPA_GDB_BREAKPOINT 63
+#define TRAPA_GDB_BREAKPOINT  63
 
 /* TRAPA #0xFF: manually inserted via gdb_breakpoint() */
 #define TRAPA_USER_BREAKPOINT 255
 
-irq_context_t *irq_ctx;
+static irq_context_t *irq_ctx;
 static bool initialized;
 static bool connected;
 
@@ -49,6 +49,7 @@ static bool connected;
    the target.
 */
 static void gdb_handle_exception(int exception_vector) {
+    char command;
     char *ptr;
 
     handle_t_stop_reply(exception_vector);
@@ -61,7 +62,9 @@ static void gdb_handle_exception(int exception_vector) {
         ptr = (char *)get_packet();
         connected = true;
 
-        switch(*ptr++) {
+        command = *ptr++;
+
+        switch(command) {
             case '?': handle_t_stop_reply(exception_vector); break;
             case 'p': handle_read_reg(ptr); break;
             case 'P': handle_write_reg(ptr); break;
@@ -77,12 +80,12 @@ static void gdb_handle_exception(int exception_vector) {
             case 'X': handle_write_mem_binary(ptr); break;
             case 'c':
             case 's':
-                if(handle_continue_step(ptr))
+                if(handle_continue_step(command, ptr))
                     return;
                 break;
             case 'C':
             case 'S':
-                if(handle_continue_step_signal(ptr))
+                if(handle_continue_step_signal(command, ptr))
                     return;
                 break;
             case 'Z':
@@ -153,14 +156,26 @@ void gdb_set_connected(bool is_connected) {
     connected = is_connected;
 }
 
+/*
+   Handle a debugger-visible SH4 exception entry.
 
-/* Generic SH4 exception entry point for debugger-visible faults. */
+   This is the common IRQ callback for faults and traps that should stop in
+   GDB. It forwards the captured exception frame and raw exception code into
+   gdb_enter_exception() without rewriting the saved PC.
+*/
 static void handle_exception(irq_t code, irq_context_t *context, void *data) {
     (void)data;
 
     gdb_enter_exception(context, code, false);
 }
 
+/*
+   Handle TRAPA #0xFF breakpoints raised by gdb_breakpoint().
+
+   This path reports the stop as EXC_TRAPA without rewinding the saved PC.
+   Unlike internal single-step and Z0 trap sites, the user breakpoint does not
+   replace another instruction that needs to be virtually restored for GDB.
+*/
 static void handle_user_trapa(irq_t code, irq_context_t *context, void *data) {
     (void)code;
     (void)data;

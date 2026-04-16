@@ -19,14 +19,12 @@
 
 #include "gdb_internal.h"
 
-#define SIGILL  4   /* Illegal Instruction */
-#define SIGTRAP 5   /* Breakpoint Trap */
-#define SIGBUS  7   /* Bus Error */
-#define SIGSEGV 11  /* Segmentation Fault */
+#define SIGILL    4   /* Illegal Instruction */
+#define SIGTRAP   5   /* Breakpoint Trap */
+#define SIGBUS    7   /* Bus Error */
+#define SIGSEGV   11  /* Segmentation Fault */
 
-/*
-   Maps SH-4 exception vectors to the signal numbers reported in stop replies.
-*/
+/* Maps SH-4 exception vectors to the signal numbers reported in stop replies. */
 static int compute_signal(int exception_vector) {
     switch(exception_vector) {
         case EXC_ILLEGAL_INSTR:
@@ -43,9 +41,7 @@ static int compute_signal(int exception_vector) {
     }
 }
 
-/*
-   Returns the reason name used in the T stop reply's reason: field.
-*/
+/* Returns the reason name used in the T stop reply's reason: field. */
 static const char *stop_reason_name(int exception_vector) {
     switch(exception_vector) {
         case EXC_TRAPA:
@@ -61,6 +57,12 @@ static const char *stop_reason_name(int exception_vector) {
     }
 }
 
+/*
+   Appends a raw byte span to the stop-reply output buffer.
+
+   This helper keeps remcom_out_buffer null-terminated and refuses writes that
+   would exhaust the remaining packet space.
+*/
 static bool append_bytes(char **out, size_t *remaining,
                          const char *src, size_t len) {
     if(!out || !*out || !remaining || (len + 1u) > *remaining)
@@ -73,10 +75,17 @@ static bool append_bytes(char **out, size_t *remaining,
     return true;
 }
 
+/* Appends one character to the stop-reply output buffer. */
 static bool append_char(char **out, size_t *remaining, char ch) {
     return append_bytes(out, remaining, &ch, 1);
 }
 
+/*
+   Appends the thread:tid field to a T stop reply.
+
+   The thread ID is emitted in the unpadded hexadecimal form GDB expects for
+   thread identifiers in remote stop packets.
+*/
 static bool append_thread_field(char **out, size_t *remaining, uint32_t tid) {
     char tid_hex[9];
     int tid_len = format_thread_id_hex(tid_hex, tid);
@@ -95,6 +104,13 @@ static bool append_thread_field(char **out, size_t *remaining, uint32_t tid) {
            append_char(out, remaining, ';');
 }
 
+/*
+   Appends the reason:name field to a T stop reply.
+
+   The reason string is derived from the SH4 exception vector and helps GDB
+   distinguish software breakpoints, hardware breakpoints, watchpoints, and
+   generic signal stops.
+*/
 static bool append_reason_field(char **out, size_t *remaining,
                                 int exception_vector) {
     const char *reason = stop_reason_name(exception_vector);
@@ -111,11 +127,13 @@ static bool append_reason_field(char **out, size_t *remaining,
 
 /*
    Handle the 'D' (detach) command.
+
    Instructs the stub to detach from the target.
    Format: D
 
-   The stub replies with "OK", marks the debugger as disconnected, and returns
-   to the interrupted program without staying in the debug loop.
+   The stub replies with "OK", clears no-ack mode, marks the debugger as
+   disconnected, and returns to the interrupted program without staying in the
+   debug loop.
 */
 void handle_detach(void) {
     put_packet(GDB_OK);
@@ -125,10 +143,13 @@ void handle_detach(void) {
 
 /*
    Handle the 'k' (kill) command.
+
    Instructs the stub to terminate the program being debugged.
    Format: k
 
    The stub replies with "OK" and then aborts execution via arch_abort().
+   This is the terminal path used for plain 'k' and for vKill once that packet
+   has been accepted by the extended-command dispatcher.
 */
 void handle_kill(void) {
     put_packet(GDB_OK);
@@ -136,9 +157,9 @@ void handle_kill(void) {
 }
 
 /*
-   Constructs a `T` stop reply packet to notify GDB that the target has halted.
-   Includes the signal, the mapped base register fields, the current thread ID,
-   and a stop reason string.
+   Handle the `T` stop reply.
+
+   Builds the structured stop packet sent to GDB when the target halts.
 
    Format:
      Tssnn:vvvvvvvv;...thread:tid;reason:name;

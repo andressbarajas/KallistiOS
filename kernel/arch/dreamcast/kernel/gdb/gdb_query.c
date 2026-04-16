@@ -40,10 +40,12 @@ typedef struct {
     bool first;
 } thread_list_state_t;
 
+/* Rounds a size up to the next multiple of the requested alignment. */
 static size_t align_to(size_t value, size_t alignment) {
     return (value + (alignment - 1)) & ~(alignment - 1);
 }
 
+/* Returns the byte offset from the TLS handle to the thread's static TLS data. */
 static size_t tls_static_data_offset(void) {
     const size_t tdata_size = (size_t)(&_tdata_size);
     const size_t tbss_size = (size_t)(&_tbss_size);
@@ -57,10 +59,12 @@ static size_t tls_static_data_offset(void) {
     return align_to(sizeof(gdb_tcbhead_t), align);
 }
 
+/* Returns whether a query packet must match the given name exactly. */
 static bool match_exact_query(const char *ptr, const char *query) {
     return strcmp(ptr, query) == 0;
 }
 
+/* Returns whether a query matches a name and an optional separator suffix. */
 static bool match_query_with_optional_suffix(const char *ptr,
                                              const char *query,
                                              char suffix_sep) {
@@ -70,6 +74,7 @@ static bool match_query_with_optional_suffix(const char *ptr,
            (ptr[len] == '\0' || ptr[len] == suffix_sep);
 }
 
+/* Parses qSupported features and enables any stub options negotiated by GDB. */
 static void parse_qsupported_features(const char *features) {
     const char *ptr = features;
 
@@ -115,8 +120,12 @@ static int append_thread_id(kthread_t *thd, void *user_data) {
 
 /*
    Handle the 'T' command.
-   Checks whether a thread ID is valid.
+
+   Checks whether the supplied thread ID names a live KOS thread.
    Format: T<thread-id> where the thread ID is an unpadded hex value.
+
+   The stub replies "OK" only when the parsed thread exists at the time of
+   the query. Malformed thread IDs and dead threads both return EINVAL.
 */
 void handle_thread_alive(char *ptr) {
     uint32_t tid = 0;
@@ -128,14 +137,17 @@ void handle_thread_alive(char *ptr) {
 }
 
 /*
-   Handle 'q' query packets.
+   Handle supported 'q' query packets.
 
-   This dispatcher implements the query subset advertised by the stub and
-   returns an empty reply for unsupported queries.
+   This dispatcher owns the query subset advertised by the stub, including
+   feature negotiation, thread enumeration, thread metadata, and TLS lookups.
+   Recognized malformed queries return an explicit error; unrecognized optional
+   queries fall back to the normal empty RSP reply.
 */
 void handle_query(char *ptr) {
     /*
        Handle the 'qSupported' command.
+
        Negotiates optional protocol features and reports the capabilities
        supported by this stub.
 
@@ -159,6 +171,7 @@ void handle_query(char *ptr) {
 
     /*
        Handle the 'qTStatus' command.
+
        Reports if there is pending asynchronous stop information.
        Format: qTStatus
        Response: Empty means no pending stop.
@@ -169,6 +182,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qOffsets' command.
+
        Requests the memory offsets for text, data, and bss.
        Format: qOffsets
        Response: Text=ADDR;Data=ADDR;Bss=ADDR
@@ -179,6 +193,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qAttached' command.
+
        Reports if the debugger was already attached (1) or newly attached (0).
        Format: qAttached
        This stub always reports "1".
@@ -189,6 +204,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qSymbol' command.
+
        GDB sends this to initiate or continue symbol lookup negotiation.
        This stub does not request any symbols and simply replies "OK" for the
        exact qSymbol packet and for qSymbol:<payload> continuation packets.
@@ -199,6 +215,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qC' command.
+
        Reports the current active thread ID.
        Format: qC
        Response: QC<thread-id> where the thread ID is an unpadded hex value.
@@ -213,6 +230,8 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qfThreadInfo' command.
+
+       Returns the initial chunk of the live thread list.
        Format: qfThreadInfo
        Response: m<thread-id>[,<thread-id>...]
     */
@@ -234,6 +253,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qsThreadInfo' command.
+
        Returns continuation thread list data after a 'qfThreadInfo' packet.
        Format: qsThreadInfo
 
@@ -247,6 +267,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qThreadExtraInfo' command.
+
        Provides hex-encoded human-readable information about a specific thread.
        Format: qThreadExtraInfo,<thread-id>
 
@@ -287,6 +308,7 @@ void handle_query(char *ptr) {
     }
     /*
        Handle the 'qGetTLSAddr' command.
+
        Returns the address of a TLS variable for a specific thread.
        Format: qGetTLSAddr:TID,OFFSET,LMID
         - TID: Thread ID
@@ -334,12 +356,14 @@ void handle_query(char *ptr) {
 
 /*
    Handle the 'Q' command.
-   Handles set-query packets that change stub behavior.
+
+   Handles supported set-query packets that change stub behavior.
 
    Currently supported:
      - QStartNoAckMode
 
-   QStartNoAckMode enables no-ack mode and replies "OK".
+   QStartNoAckMode switches the transport into no-ack mode after replying
+   "OK". Unsupported Q packets return an empty reply rather than an error.
 */
 void handle_set_query(char *ptr) {
     if(match_exact_query(ptr, "StartNoAckMode")) {

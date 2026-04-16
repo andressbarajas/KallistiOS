@@ -154,6 +154,7 @@ static void put_debug_char(char ch) {
 
 /*
    Flushes the output buffer to the host.
+
    For dc-load, this sends any buffered output and may also refill the inbound
    packet buffer. For SCIF, per-character writes are already flushed, so this
    helper is effectively a no-op.
@@ -207,16 +208,17 @@ static void discard_packet_tail(void) {
         ch = get_debug_char();
     } while(ch != '#');
 
+    /*
+       These two calls consume the 2 checksum bytes that come after # in a GDB
+       RSP packet
+    */
     (void)get_debug_char();
     (void)get_debug_char();
 }
 
 /*
- * Routines to get and put packets
- */
-
-/*
    Reads a full GDB packet from the debug channel.
+
    Format: $<data>#<checksum>
    Verifies the checksum and emits +/- acknowledgements when ack mode is active.
    If a sequence prefix is present, the returned pointer skips past it.
@@ -301,6 +303,7 @@ unsigned char *get_packet(void) {
 
 /*
    Sends a GDB response packet using optional run-length encoding.
+
    Format: $<data>#<checksum>
    Retransmits until the host sends an ACK, unless no-ack mode is active.
 */

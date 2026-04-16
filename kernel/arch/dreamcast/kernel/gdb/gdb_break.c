@@ -59,10 +59,12 @@ typedef struct {
 static sw_breakpoint_t sw_breakpoints[MAX_SW_BREAKPOINTS];
 static hw_breakpoint_t gdb_hw_bps[2];
 
+/* Normalizes an address to the cached P1 alias used for code patching. */
 static uintptr_t normalize_cached_address(uintptr_t addr) {
     return (addr & MEM_AREA_CACHE_MASK) | MEM_AREA_P1_BASE;
 }
 
+/* Returns whether the requested software-breakpoint range lies in valid text. */
 static bool is_valid_sw_breakpoint_range(uintptr_t addr, size_t length) {
     uintptr_t end_addr;
 
@@ -79,6 +81,7 @@ static bool is_valid_sw_breakpoint_range(uintptr_t addr, size_t length) {
 
 /*
    Insert or remove a software breakpoint.
+
    Replaces the instruction at a 2-byte aligned address with TRAPA and keeps
    the original instruction word so it can be restored on z0 removal.
 
@@ -121,6 +124,7 @@ static void soft_breakpoint(bool set, uintptr_t addr, size_t length) {
                     return;
                 }
 
+                /* Remove the stub's TRAPA and restore the original instruction. */
                 *site = sw_breakpoints[i].original;
                 icache_flush_range(normalized_addr, 2);
                 sw_breakpoints[i].active = false;
@@ -142,6 +146,8 @@ static void soft_breakpoint(bool set, uintptr_t addr, size_t length) {
             sw_breakpoints[i].addr = normalized_addr;
             sw_breakpoints[i].original = *site;
             sw_breakpoints[i].active = true;
+
+            /* Patch the target instruction with the software-break TRAPA. */
             *site = GDB_SW_BREAK_OPCODE;
             icache_flush_range(normalized_addr, 2);
             gdb_put_ok();
@@ -187,7 +193,7 @@ static bool build_hw_breakpoint(ubc_breakpoint_t *bp, int brk_type,
                                 uintptr_t addr, size_t length) {
     ubc_size_t size;
 
-    memset(bp, 0, sizeof(*bp));
+    memset(bp, 0, sizeof(ubc_breakpoint_t));
     bp->address = (void *)addr;
 
     switch(brk_type) {
@@ -259,7 +265,7 @@ static bool needs_split_operand_watchpoint(int brk_type, size_t length) {
 
 /* Clears bookkeeping for one tracked hardware breakpoint slot. */
 static void clear_hw_breakpoint_slot(hw_breakpoint_t *slot) {
-    memset(slot, 0, sizeof(*slot));
+    memset(slot, 0, sizeof(hw_breakpoint_t));
 }
 
 /*
@@ -324,10 +330,12 @@ static void set_split_operand_watchpoint(int brk_type, uintptr_t addr,
 
 /*
    Sets or clears a hardware breakpoint/watchpoint using SH4 UBC.
+
    Supports instruction, read, write, or access break types.
 
-   Requests are tracked by type, address, and kind so repeated inserts are
-   idempotent and removals target the matching active entry.
+   Requests are tracked by type, address, and kind so inserting the same
+   breakpoint again does not create a duplicate, and removals clear the
+   matching active entry.
 */
 static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
                             size_t length) {
@@ -400,12 +408,12 @@ static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
     if(!build_hw_breakpoint(&slot->bp, brk_type, addr, length)) {
         gdb_error_with_code_str(GDB_EMEM_SIZE,
                                 "Z/z: unsupported hardware breakpoint length");
-        memset(slot, 0, sizeof(*slot));
+        memset(slot, 0, sizeof(hw_breakpoint_t));
         return;
     }
 
     if(!ubc_add_breakpoint(&slot->bp, NULL, NULL)) {
-        memset(slot, 0, sizeof(*slot));
+        memset(slot, 0, sizeof(hw_breakpoint_t));
         gdb_error_with_code_str(GDB_EBKPT_SET_FAIL,
                                 "Z/z: failed to program hardware breakpoint");
         return;
@@ -417,12 +425,14 @@ static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
     slot->partner = -1;
     slot->primary = true;
     slot->active = true;
+
     gdb_put_ok();
 }
 
 /*
    Handle the 'Z' and 'z' commands.
-   Inserts or removes a breakpoint or watchpoint.
+
+   Inserts or removes a breakpoint or watchpoint request from GDB.
    Format: Ztype,addr,kind or ztype,addr,kind
 
    Supported types:
@@ -431,6 +441,10 @@ static void hard_breakpoint(bool set, int brk_type, uintptr_t addr,
      - 2: write watchpoint
      - 3: read watchpoint
      - 4: access watchpoint
+
+   After parsing the type, address, and kind fields, this dispatcher forwards
+   the request into the software-breakpoint or UBC-backed hardware/watchpoint
+   path. Invalid packet syntax and unsupported breakpoint kinds return EINVAL.
 */
 void handle_breakpoint(char *ptr) {
     bool set = (ptr[-1] == 'Z');

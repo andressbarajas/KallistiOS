@@ -9,16 +9,10 @@
 */
 
 /*
-   Implements GDB memory access packets for Dreamcast targets.
+   Implements GDB memory packet handling for the Dreamcast stub.
 
-   Supported packet families:
-     - m / M : hexadecimal memory reads and writes
-     - x / X : binary memory reads and writes
-
-   The handlers reject P4 SH-internal space, heuristically validate other
-   ranges using KOS address helpers, escape outbound binary replies and
-   unescape inbound binary payloads as required by RSP, and flush the
-   instruction cache after writes that may affect code.
+   This file handles m/M hex memory access, x/X binary memory access, address
+   validation, RSP binary escaping, and cache flushing after writes.
 */
 
 #include <arch/arch.h>
@@ -28,13 +22,7 @@
 
 #include "gdb_internal.h"
 
-/*
-   Heuristically validates a single address for GDB memory access.
-
-   P4 SH-internal space is rejected outright; all other addresses are
-   normalized to the cached P1 alias before consulting KOS's generic address
-   helpers.
-*/
+/* Returns whether one address is valid for a GDB memory access. */
 static bool is_valid_memory_address(uintptr_t addr, bool is_write) {
     if(addr >= MEM_AREA_P4_BASE)
         return false;
@@ -47,12 +35,7 @@ static bool is_valid_memory_address(uintptr_t addr, bool is_write) {
     return false;
 }
 
-/*
-   Validates an address range by checking the first and last accessed bytes.
-
-   Zero-length accesses are allowed. Overflow in the computed end address is
-   treated as invalid.
-*/
+/* Returns whether an address range is valid for a GDB memory access. */
 static bool is_valid_memory_range(uint32_t addr, uint32_t len, bool is_write) {
     uintptr_t end_addr;
 
@@ -67,6 +50,7 @@ static bool is_valid_memory_range(uint32_t addr, uint32_t len, bool is_write) {
            is_valid_memory_address(end_addr, is_write);
 }
 
+/* Appends one byte to an RSP binary reply, escaping framing characters. */
 static char *append_escaped_binary_byte(char *out, unsigned char value) {
     if(value == '\0' || value == '$' || value == '#' ||
        value == '}' || value == '*') {
@@ -80,11 +64,13 @@ static char *append_escaped_binary_byte(char *out, unsigned char value) {
     return out;
 }
 
+/* Parses the ADDR,LEN header shared by m/M/x/X memory packets. */
 static bool parse_binary_memory_header(char **ptr, uint32_t *addr, uint32_t *len) {
     return hex_to_int(ptr, addr) && *(*ptr)++ == ',' &&
            hex_to_int(ptr, len);
 }
 
+/* Decodes a fixed-width hex payload only when every nibble is valid. */
 static bool hex_to_mem_checked(const char *src, void *dest, uint32_t count) {
     if(!src || !dest)
         return false;
@@ -103,8 +89,12 @@ static bool hex_to_mem_checked(const char *src, void *dest, uint32_t count) {
 
 /*
    Handle the 'm' command.
-   Reads memory from the target at a given address and length.
+
+   Reads a target memory range and returns it as lowercase hex text.
    Format: mADDR,LEN
+
+   The range must be readable and the encoded reply must fit in
+   remcom_out_buffer.
 */
 void handle_read_mem(char *ptr) {
     uint32_t addr = 0;
@@ -130,10 +120,11 @@ void handle_read_mem(char *ptr) {
 
 /*
    Handle the 'M' command.
-   Writes memory to the target at a given address.
+
+   Writes hex-encoded bytes into target memory.
    Format: MADDR,LEN:DATA
 
-   DATA is hex-encoded.
+   The range, payload length, and hex digits are validated before writing.
 */
 void handle_write_mem(char *ptr) {
     uint32_t addr = 0;
@@ -177,13 +168,11 @@ void handle_write_mem(char *ptr) {
 
 /*
    Handle the 'x' command.
-   Reads memory from the target and returns it as RSP-escaped binary data.
+
+   Reads target memory and returns it as RSP-escaped binary data.
    Format: xADDR,LEN
 
-   - ADDR: Target address in hex
-   - LEN:  Number of bytes to read
-
-   Special characters are escaped according to the GDB remote protocol.
+   Bytes that would collide with packet framing are escaped in the reply.
 */
 void handle_read_mem_binary(char *ptr) {
     uint32_t addr = 0;
@@ -215,10 +204,7 @@ void handle_read_mem_binary(char *ptr) {
 }
 
 /*
-   Decodes an escaped RSP binary payload into exactly output_len bytes.
-
-   Returns false if the escaped source data is truncated or if it does not
-   decode to exactly the requested output length.
+   Decodes an escaped RSP binary payload into a fixed number of output bytes.
 */
 static bool unescape_binary_data(const unsigned char *src, size_t src_len,
                                  char *dest, uint32_t output_len) {
@@ -247,12 +233,11 @@ static bool unescape_binary_data(const unsigned char *src, size_t src_len,
 
 /*
    Handle the 'X' command.
-   Writes binary data to target memory at a given address.
+
+   Writes an RSP-escaped binary payload into target memory.
    Format: XADDR,LEN:DATA
 
-   - ADDR: Target address in hex
-   - LEN:  Number of bytes to write
-   - DATA: Raw binary data (not hex-encoded), may include RSP escape sequences
+   The range and escaped payload are validated before writing decoded bytes.
 */
 void handle_write_mem_binary(char *ptr) {
     char *packet_start = ptr;

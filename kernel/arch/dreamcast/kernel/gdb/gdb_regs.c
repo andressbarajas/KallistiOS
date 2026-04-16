@@ -86,7 +86,7 @@ static uint64_t build_dr(uint32_t fr_low, uint32_t fr_high) {
 }
 
 /* Packs four FR register words into one pseudo vector register (fvN). */
-static void build_fv(uint32_t fv[4], const irq_context_t *context, int base) {
+static void build_fv(uint32_t *fv, const irq_context_t *context, int base) {
     fv[0] = context->fr[base + 0];
     fv[1] = context->fr[base + 1];
     fv[2] = context->fr[base + 2];
@@ -156,6 +156,13 @@ static char *append_zero_reg_hex(char *out) {
     return mem_to_hex((const char *)&zero, out, sizeof(zero));
 }
 
+/*
+   Decodes a fixed number of hex bytes after validating every nibble.
+
+   This helper is used for register payloads where silent garbage would be
+   unsafe. It converts exactly count output bytes and fails if any input
+   character is not hexadecimal.
+*/
 static bool hex_to_mem_checked_n(const char *src, void *dest, size_t count) {
     unsigned char *out = (unsigned char *)dest;
 
@@ -175,6 +182,13 @@ static bool hex_to_mem_checked_n(const char *src, void *dest, size_t count) {
     return true;
 }
 
+/*
+   Parses a register payload whose encoded width must match exactly.
+
+   The input must be exactly size * 2 hex characters long and terminate
+   immediately after the encoded value. This prevents partial or overlong
+   single-register writes from being accepted accidentally.
+*/
 static bool parse_register_hex_exact(const char *in, void *out, size_t size) {
     if(!in || in[size * 2u] != '\0')
         return false;
@@ -182,6 +196,13 @@ static bool parse_register_hex_exact(const char *in, void *out, size_t size) {
     return hex_to_mem_checked_n(in, out, size);
 }
 
+/*
+   Validates that a fixed-width span consists only of hexadecimal digits.
+
+   This is used for the bulk G packet before consuming the raw SH4 register
+   block, so malformed characters can be rejected before any register state is
+   written back into irq_context_t.
+*/
 static bool validate_hex_span(const char *in, size_t hex_chars) {
     if(!in)
         return false;
@@ -194,6 +215,13 @@ static bool validate_hex_span(const char *in, size_t hex_chars) {
     return in[hex_chars] == '\0';
 }
 
+/*
+   Encodes one raw or pseudo register into GDB hex form.
+
+   Base SH4 registers are read from the selected IRQ context, unavailable and
+   reserved raw slots are reported as zero, and implemented pseudo registers
+   such as drN and fvN are synthesized from the floating-point register bank.
+*/
 static bool read_register_hex(char *out, int regnum) {
     irq_context_t *context;
 
@@ -246,6 +274,14 @@ static bool read_register_hex(char *out, int regnum) {
     return false;
 }
 
+/*
+   Decodes and writes one raw or pseudo register from GDB hex form.
+
+   Base SH4 registers are written directly into the selected IRQ context.
+   Unavailable and reserved raw slots are accepted only for layout
+   compatibility and ignored. Implemented pseudo registers such as drN and fvN
+   are unpacked back into the underlying floating-point register words.
+*/
 static bool write_register_hex(int regnum, const char *in) {
     irq_context_t *context;
     uint32_t value32;
@@ -311,9 +347,12 @@ static bool write_register_hex(int regnum, const char *in) {
 
 /*
    Handle the 'p' command.
-   Reads a single register from the target.
-   Format: pNN
-   Where NN is the register number in hex.
+
+   Reads one raw GDB register slot from the current register-selection context.
+   Format: pNN where NN is the register number in hex.
+
+   The reply width depends on the selected raw register definition. Invalid,
+   unmapped, or malformed register requests return EINVAL.
 */
 void handle_read_reg(char *ptr) {
     uint32_t regnum = 0;
@@ -326,10 +365,12 @@ void handle_read_reg(char *ptr) {
 
 /*
    Handle the 'P' command.
-   Writes a single register to the target.
-   Format: PNN=...
-   Where NN is the register number in hex and the value width depends on the
-   selected register.
+
+   Writes one raw GDB register slot in the current register-selection context.
+   Format: PNN=... where NN is the register number in hex.
+
+   The payload width must match the selected register exactly. Invalid register
+   numbers, malformed packet syntax, and bad hex payloads return EINVAL.
 */
 void handle_write_reg(char *ptr) {
     uint32_t regnum = 0;
@@ -345,7 +386,10 @@ void handle_write_reg(char *ptr) {
 
 /*
    Handle the 'g' command.
+
    Returns the full raw SH4 g/G register block expected by GDB.
+   Format: g
+
    This includes the mapped base registers plus zero-filled unavailable and
    reserved raw slots; pseudo registers are not part of the bulk packet.
 */
@@ -369,7 +413,10 @@ void handle_read_regs(char *ptr) {
 
 /*
    Handle the 'G' command.
+
    Consumes the full raw SH4 g/G register block supplied by GDB.
+   Format: G<raw-register-hex-block>
+
    Only the mapped base registers are written back to irq_context_t;
    unavailable and reserved raw slots are accepted and ignored.
 */

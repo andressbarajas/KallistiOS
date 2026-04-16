@@ -32,28 +32,28 @@
 
 
 /* Hitachi SH architecture instruction encoding masks */
-#define COND_BR_MASK   0xff00
-#define UCOND_DBR_MASK 0xe000
-#define UCOND_RBR_MASK 0xf0df
-#define TRAPA_MASK     0xff00
+#define COND_BR_MASK    0xff00
+#define UCOND_DBR_MASK  0xe000
+#define UCOND_RBR_MASK  0xf0df
+#define TRAPA_MASK      0xff00
 
-#define COND_DISP      0x00ff
-#define UCOND_DISP     0x0fff
-#define UCOND_REG      0x0f00
+#define COND_DISP       0x00ff
+#define UCOND_DISP      0x0fff
+#define UCOND_REG       0x0f00
 
 /* Hitachi SH instruction opcodes */
-#define BF_INSTR       0x8b00
-#define BFS_INSTR      0x8f00
-#define BT_INSTR       0x8900
-#define BTS_INSTR      0x8d00
-#define BRA_INSTR      0xa000
-#define BSR_INSTR      0xb000
-#define JMP_INSTR      0x402b
-#define JSR_INSTR      0x400b
-#define RTS_INSTR      0x000b
-#define RTE_INSTR      0x002b
-#define TRAPA_INSTR    0xc300
-#define SSTEP_INSTR    0xc320
+#define BF_INSTR        0x8b00
+#define BFS_INSTR       0x8f00
+#define BT_INSTR        0x8900
+#define BTS_INSTR       0x8d00
+#define BRA_INSTR       0xa000
+#define BSR_INSTR       0xb000
+#define JMP_INSTR       0x402b
+#define JSR_INSTR       0x400b
+#define RTS_INSTR       0x000b
+#define RTE_INSTR       0x002b
+#define TRAPA_INSTR     0xc300
+#define SSTEP_INSTR     0xc320
 
 /* Hitachi SH processor register masks */
 #define T_BIT_MASK     0x0001
@@ -96,8 +96,16 @@ static void handle_step_trapa(irq_t code, irq_context_t *context, void *data);
 static bool handle_step_rte_break(const ubc_breakpoint_t *bp,
                                   const irq_context_t *context,
                                   void *data);
+static bool is_supported_ctrl_thread(int tid);
 
-static bool resume_target(bool stepping, bool set_pc, uint32_t pc) {
+/*
+   Resume the currently selected control thread.
+
+   This helper is the shared backend for c/s, C/S, and parsed vCont actions.
+   It optionally rewrites the resume PC and prepares single-step state when
+   needed before returning control to the target.
+*/
+bool gdb_resume_target(bool stepping, bool set_pc, uint32_t pc) {
     setup_ctrl_context();
 
     if(set_pc)
@@ -148,6 +156,7 @@ static bool handle_step_rte_break(const ubc_breakpoint_t *bp,
     (void)data;
 
     gdb_enter_exception((irq_context_t *)context, EXC_USER_BREAK_POST, false);
+
     return false;
 }
 
@@ -156,18 +165,34 @@ void set_ctrl_thread(int tid) {
     gdb_thread_for_ctrl = tid;
 }
 
-/* Returns the current thread selector used for control operations. */
-int get_ctrl_thread(void) {
-    return gdb_thread_for_ctrl;
-}
-
 /*
    Sets the IRQ context used for control operations like continue/step.
-   If the selected thread is "any" or "all", or the requested thread no longer
-   exists, it falls back to the interrupted thread's current context.
+
+   Control packets can only resume the currently stopped thread in this all-stop
+   stub. Hc accepts only selectors that resolve to the live exception context:
+   "any", "all", or the currently stopped thread's ID.
 */
 void setup_ctrl_context(void) {
     ctrl_irq_ctx = gdb_resolve_thread_context(gdb_thread_for_ctrl);
+}
+
+/*
+   Returns whether an Hc thread selector can be honored without scheduler help.
+
+   The stub may inspect other threads' saved register contexts, but execution
+   control still returns through the current exception frame. Without core
+   scheduler support, resuming a different thread would be misleading.
+*/
+static bool is_supported_ctrl_thread(int tid) {
+    kthread_t *current = thd_get_current();
+
+    if(tid == GDB_THREAD_ANY || tid == GDB_THREAD_ALL)
+        return true;
+
+    if(!current || tid <= GDB_THREAD_ANY)
+        return false;
+
+    return current->tid == (tid_t)tid;
 }
 
 /*
@@ -186,6 +211,7 @@ static bool do_single_step(void) {
     unsigned short opcode, br_opcode;
 
     setup_ctrl_context();
+
     instr_mem = (short *)ctrl_irq_ctx->pc;
     opcode = *instr_mem;
     br_opcode = opcode & COND_BR_MASK;
@@ -247,7 +273,7 @@ static bool do_single_step(void) {
     else if(opcode == RTS_INSTR)
         instr_mem = (short *)ctrl_irq_ctx->pr;
     else if(opcode == RTE_INSTR) {
-        memset(&step_state.ubc.bp, 0, sizeof(step_state.ubc.bp));
+        memset(&step_state.ubc.bp, 0, sizeof(ubc_breakpoint_t));
         step_state.kind = STEP_UBC_POST;
         step_state.ubc.bp.address = (void *)ctrl_irq_ctx->pc;
         step_state.ubc.bp.access = ubc_access_instruction;
@@ -307,7 +333,7 @@ void undo_single_step(void) {
     }
 
     stepped = false;
-    memset(&step_state, 0, sizeof(step_state));
+    memset(&step_state, 0, sizeof(step_data_t));
 }
 
 /*
@@ -323,12 +349,13 @@ void undo_single_step(void) {
      - 's'           → single-step from current PC
      - 'sXXXX'       → single-step from address XXXX
 
-   This function parses the optional address (if present), updates the selected
-   control thread's PC, and resumes that thread. If single-stepping, it
-   prepares the computed next stop location for trapping.
+   command is the packet opcode ('c' or 's'), and ptr points to the optional
+   address payload that follows it. This function parses that address when
+   present, updates the live exception context's PC, and resumes execution. If
+   single-stepping, it prepares the computed next stop location for trapping.
 */
-bool handle_continue_step(char *ptr) {
-    bool stepping = (ptr[-1] == 's');
+bool handle_continue_step(char command, char *ptr) {
+    bool stepping = (command == 's');
     uint32_t addr = 0;
     bool set_pc = hex_to_int(&ptr, &addr) != 0;
 
@@ -337,11 +364,11 @@ bool handle_continue_step(char *ptr) {
         return false;
     }
 
-    return resume_target(stepping, set_pc, addr);
+    return gdb_resume_target(stepping, set_pc, addr);
 }
 
 /*
-   Handles the 'C' and 'S' packets for continue or step with signal.
+   Handle the 'C' and 'S' commands.
 
    Format:
      - 'Cxx'         → continue with signal xx
@@ -349,14 +376,15 @@ bool handle_continue_step(char *ptr) {
      - 'Cxx;ADDR'    → continue from address ADDR with signal xx
      - 'Sxx;ADDR'    → step from address ADDR with signal xx
 
-   Signals are ignored on SH4; this just resumes or steps the selected control
+   Signals are ignored on SH4; this just resumes or steps the currently stopped
    thread as needed. If 'S' is used, single-step mode is enabled before
    continuing.
 
-   ptr points to the character after 'C' or 'S'.
+   command is the packet opcode ('C' or 'S'), and ptr points to the character
+   after it.
 */
-bool handle_continue_step_signal(char *ptr) {
-    bool stepping = (ptr[-1] == 'S');
+bool handle_continue_step_signal(char command, char *ptr) {
+    bool stepping = (command == 'S');
     uint32_t signal = 0;
     uint32_t addr = 0;
     bool set_pc = false;
@@ -385,7 +413,7 @@ bool handle_continue_step_signal(char *ptr) {
 
     /* SH4 does not use the supplied signal value here. */
     (void)signal;
-    return resume_target(stepping, set_pc, addr);
+    return gdb_resume_target(stepping, set_pc, addr);
 }
 
 /*
@@ -393,13 +421,15 @@ bool handle_continue_step_signal(char *ptr) {
 
    Format:
      - HgXX → Set thread for register ops (g, G, p, P)
-     - HcXX → Set thread for control ops (c, s, C, S, and vCont continue/step)
+     - HcXX → Select the live thread for control ops when it is the current stop
 
    XX is a thread ID in hex. Special values:
      - 0        → Any thread (default)
      - 0xFFFFFFFF (or -1) → All threads
 
-   Unsupported selectors and unknown thread IDs return invalid-argument errors.
+   Register selection supports dormant thread contexts. Control selection is
+   intentionally narrower: without scheduler help, continue/step can only act
+   on the currently stopped thread (or the equivalent "any/all" selectors).
 */
 void handle_thread_select(char *ptr) {
     int tid = GDB_THREAD_ANY;
@@ -422,8 +452,15 @@ void handle_thread_select(char *ptr) {
 
     if(type == 'g')
         set_regs_thread(tid);
-    else if(type == 'c')
+    else if(type == 'c') {
+        if(!is_supported_ctrl_thread(tid)) {
+            gdb_error_with_code_str(GDB_EUNIMPL,
+                                    "Hc: non-current thread execution unsupported");
+            return;
+        }
+
         set_ctrl_thread(tid);
+    }
     else {
         gdb_error_with_code_str(GDB_EINVAL, "H: unsupported selector");
         return;
