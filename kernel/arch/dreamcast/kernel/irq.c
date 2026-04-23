@@ -154,7 +154,8 @@ void irq_dump_regs(int code, irq_t evt) {
         /* Construct template message only if either PC/PR address is valid */
         if(valid_pc || valid_pr) {
             dbglog(DBG_DEAD, "Use this template terminal command to help"
-                " diagnose:\n\n\t$KOS_ADDR2LINE -f -C -i -e prog.elf");
+                " diagnose:\n\n\t$KOS_ADDR2LINE -f -C -i -e %s",
+                arch_get_program_name());
 
             if(valid_pc)
                 dbglog(DBG_DEAD, " %08lx", irq_srt_addr->pc);

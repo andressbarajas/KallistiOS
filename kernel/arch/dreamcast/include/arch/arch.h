@@ -111,6 +111,15 @@ void arch_panic(const char *str) __noreturn;
 */
 void arch_main(void) __noreturn;
 
+/** \brief  Get the current program name.
+
+    This returns the default program name used by KOS, or `argv[0]` when one
+    was supplied by the loader.
+
+    \return                 The current program name.
+*/
+const char *arch_get_program_name(void);
+
 /** @} */
 
 /** \defgroup arch_retpaths Exit Paths

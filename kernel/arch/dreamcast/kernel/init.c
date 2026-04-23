@@ -169,6 +169,8 @@ struct args_data {
 };
 
 static char default_program_name[] = "prog.elf";
+static const char *main_program_name = default_program_name;
+
 static char *default_argv[] = { default_program_name, NULL };
 static struct args_data main_args = { 1, default_argv };
 
@@ -197,6 +199,10 @@ static const kosload_info_t *kosload_get_info(void) {
     return info;
 }
 
+const char *arch_get_program_name(void) {
+    return main_program_name;
+}
+
 /* Build argc/argv from kos-tool's NUL-separated argv buffer, if present. */
 static void args_init(void) {
     const kosload_info_t *info = kosload_get_info();
@@ -205,9 +211,15 @@ static void args_init(void) {
     if(!info || !info->argc)
         return;
 
+    if(info->argv_data[0])
+        main_program_name = info->argv_data;
+
     argv = malloc((info->argc + 1) * sizeof(*argv));
-    if(!argv)
+    if(!argv) {
+        /* Fall back to the loader-provided program name even when malloc fails */
+        default_argv[0] = (char *)main_program_name;
         return;
+    }
 
     for(int i = 0, data_off = 0; i < info->argc; ++i) {
         argv[i] = (char *)info->argv_data + data_off;
