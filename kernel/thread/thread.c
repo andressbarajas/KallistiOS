@@ -91,6 +91,30 @@ static size_t thd_count = 0;
 /* The idle task */
 static kthread_t *thd_idle_thd = NULL;
 
+static inline uint64_t thd_time_to_ms(const timespec_t *time) {
+    return (uint64_t)time->tv_sec * 1000ULL + (uint64_t)(time->tv_nsec / 1000000ULL);
+}
+
+static inline uint64_t thd_time_to_ns(const timespec_t *time) {
+    return (uint64_t)time->tv_sec * 1000000000ULL + (uint64_t)time->tv_nsec;
+}
+
+static inline void thd_get_scheduler_times(uint64_t *now_ms, uint64_t *now_ns) {
+    timespec_t time = timer_gettime();
+
+    *now_ms = thd_time_to_ms(&time);
+    *now_ns = thd_time_to_ns(&time);
+}
+
+static inline uint64_t thd_cpu_time_now(const kthread_t *thd, uint64_t now_ns) {
+    uint64_t total = thd->cpu_time.total;
+
+    if(thd == thd_current && thd->state == STATE_RUNNING)
+        total += now_ns - thd->cpu_time.scheduled;
+
+    return total;
+}
+
 /*****************************************************************************/
 /* Debug */
 
@@ -131,15 +155,14 @@ int thd_each(int (*cb)(kthread_t *thd, void *user_data), void *data) {
 }
 
 int thd_pslist(int (*pf)(const char *fmt, ...)) {
-    uint64_t cpu_time, ms_time, cpu_total = 0;
+    uint64_t cpu_time_ns, elapsed_ns, cpu_total_ns = 0;
     kthread_t *cur;
 
     pf("All threads (may not be deterministic):\n");
     pf("addr\t  tid\tprio\tflags\t  wait_timeout\t  cpu_time\t      state\t  name\n");
 
     irq_disable_scoped();
-    thd_get_cpu_time(thd_get_current());
-    ms_time = timer_ms_gettime64();
+    elapsed_ns = timer_ns_gettime64();
 
     LIST_FOREACH(cur, &thd_list, t_list) {
         pf("%08lx  ", CONTEXT_PC(cur->context));
@@ -153,19 +176,21 @@ int thd_pslist(int (*pf)(const char *fmt, ...)) {
         pf("%08lx  ", cur->flags);
         pf("%12lu", (uint32_t)cur->wait_timeout);
 
-        cpu_time = cur->cpu_time.total;
-        cpu_total += cpu_time;
+        cpu_time_ns = thd_cpu_time_now(cur, elapsed_ns);
+        cpu_total_ns += cpu_time_ns;
 
         pf("%12llu (%6.3lf%%)  ",
-            cpu_time, (double)cpu_time / (double)ms_time * 100.0);
+            cpu_time_ns / 1000000ULL,
+            elapsed_ns ? (double)cpu_time_ns / (double)elapsed_ns * 100.0 : 0.0);
 
         pf("%-10s  ", thd_state_to_str(cur));
         pf("%-10s\n", cur->label);
     }
 
     pf("-\t  -\t -\t       -\t     -");
-    pf("%12llu (%6.3lf%%)       -      [system]\n", (ms_time - cpu_total),
-        (double)(ms_time - cpu_total) / (double)ms_time * 100.0);
+    pf("%12llu (%6.3lf%%)       -      [system]\n",
+        (elapsed_ns - cpu_total_ns) / 1000000ULL,
+        elapsed_ns ? (double)(elapsed_ns - cpu_total_ns) / (double)elapsed_ns * 100.0 : 0.0);
 
     pf("--end of list--\n");
 
@@ -613,18 +638,19 @@ tid_t thd_get_id(const kthread_t *thd) {
 /*****************************************************************************/
 /* Scheduling routines */
 
-static void thd_update_cpu_time(kthread_t *thd, uint64_t now) {
-    thd_current->cpu_time.total +=
-            now - thd_current->cpu_time.scheduled;
+static void thd_update_cpu_time(kthread_t *thd, uint64_t now_ms, uint64_t now_ns) {
+    thd_current->cpu_time.total += now_ns - thd_current->cpu_time.scheduled;
 
-    thd->cpu_time.scheduled = now;
+    thd->cpu_time.scheduled = now_ns;
+    thd->cpu_time.scheduled_ms = now_ms;
 }
 
 /* Helper function that sets a thread being scheduled */
-static inline void thd_schedule_inner(kthread_t *thd, uint64_t now) {
+static inline void thd_schedule_inner(kthread_t *thd, uint64_t now_ms,
+                                      uint64_t now_ns) {
     thd_remove_from_runnable(thd);
 
-    thd_update_cpu_time(thd, now);
+    thd_update_cpu_time(thd, now_ms, now_ns);
 
     thd_current = thd;
     _impure_ptr = &thd->thd_reent;
@@ -646,7 +672,7 @@ static inline prio_t thd_calc_prio(const kthread_t *thd, uint32_t now) {
     prio_t prio = thd->prio;
 
     if(__predict_true(prio < PRIO_MAX))
-       prio >>= (now - (uint32_t)thd->cpu_time.scheduled) >> thd_ageing_ms_log2;
+       prio >>= (now - (uint32_t)thd->cpu_time.scheduled_ms) >> thd_ageing_ms_log2;
 
     return prio;
 }
@@ -670,10 +696,10 @@ static inline prio_t thd_calc_prio(const kthread_t *thd, uint32_t now) {
 void thd_schedule(bool front_of_line) {
     kthread_t *thd, *next_thd = NULL;
     prio_t prio, max_prio = INT_MAX;
-    uint64_t now;
+    uint64_t now_ms, now_ns;
     int ret;
 
-    now = timer_ms_gettime64();
+    thd_get_scheduler_times(&now_ms, &now_ns);
 
     /* If there's only two thread left, it's the idle task and the reaper task:
        exit the OS */
@@ -690,7 +716,7 @@ void thd_schedule(bool front_of_line) {
     }
 
     /* Look for timed out waits */
-    genwait_check_timeouts(now);
+    genwait_check_timeouts(now_ms);
 
     /* Search downwards through the run queue for a runnable thread; if
        we don't find a normal runnable thread, the idle process will
@@ -699,7 +725,7 @@ void thd_schedule(bool front_of_line) {
         if(__predict_false(thd->state == STATE_POLLING)) {
             /* Is it polling? Call the polling function. */
 
-            if(thd->wait_timeout && thd->wait_timeout < now) {
+            if(thd->wait_timeout && thd->wait_timeout < now_ms) {
                 thd->state = STATE_READY;
                 CONTEXT_RET(thd->context) = 0;
             }
@@ -717,7 +743,7 @@ void thd_schedule(bool front_of_line) {
         if(thd->state != STATE_READY)
             continue;
 
-        prio = thd_calc_prio(thd, now);
+        prio = thd_calc_prio(thd, now_ms);
         if(prio < max_prio) {
             next_thd = thd;
             max_prio = prio;
@@ -747,7 +773,7 @@ void thd_schedule(bool front_of_line) {
 
     /* We should now have a runnable thread, so remove it from the
        run queue and switch to it. */
-    thd_schedule_inner(next_thd, now);
+    thd_schedule_inner(next_thd, now_ms, now_ns);
 }
 
 /* Temporary priority boosting function: call this from within an interrupt
@@ -755,6 +781,8 @@ void thd_schedule(bool front_of_line) {
    interrupt return to jump back to the new thread instead of the one that
    was executing (unless it was already executing). */
 void thd_schedule_next(kthread_t *thd) {
+    uint64_t now_ms, now_ns;
+
     /* Make sure we're actually inside an interrupt */
     if(!irq_inside_int())
         return;
@@ -776,7 +804,8 @@ void thd_schedule_next(kthread_t *thd) {
         thd_add_to_runnable(thd_current, 0);
     }
 
-    thd_schedule_inner(thd, timer_ms_gettime64());
+    thd_get_scheduler_times(&now_ms, &now_ns);
+    thd_schedule_inner(thd, now_ms, now_ns);
 }
 
 /* See kos/thread.h for description */
@@ -1012,15 +1041,22 @@ struct _reent *thd_get_reent(kthread_t *thd) {
 }
 
 uint64_t thd_get_cpu_time(kthread_t *thd) {
-    return thd->cpu_time.total;
+    uint64_t now_ns;
+
+    irq_disable_scoped();
+    now_ns = timer_ns_gettime64();
+    return thd_cpu_time_now(thd, now_ns);
 }
 
 uint64_t thd_get_total_cpu_time(void) {
     kthread_t *cur;
     uint64_t retval = 0;
+    uint64_t now_ns;
 
+    irq_disable_scoped();
+    now_ns = timer_ns_gettime64();
     LIST_FOREACH(cur, &thd_list, t_list) {
-        retval += cur->cpu_time.total;
+        retval += thd_cpu_time_now(cur, now_ns);
     }
 
     return retval;
@@ -1120,7 +1156,10 @@ int thd_init(void) {
 
     /* Main thread -- the kern thread */
     thd_current = kern;
-    thd_schedule_inner(kern, timer_ms_gettime64());
+
+    uint64_t now_ms, now_ns;
+    thd_get_scheduler_times(&now_ms, &now_ns);
+    thd_schedule_inner(kern, now_ms, now_ns);
 
     /* Initialize tls */
     arch_tls_init();

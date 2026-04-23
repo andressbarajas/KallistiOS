@@ -219,10 +219,17 @@ typedef struct __attribute__((aligned(32))) kthread {
     */
     uint64_t wait_timeout;
 
-    /** \brief Per-Thread CPU Time, in milliseconds. */
+    /** \brief Per-Thread CPU Time.
+
+        The public CPU-time counters are tracked in nanoseconds so APIs such as
+        thd_get_cpu_time() and CLOCK_THREAD_CPUTIME_ID can provide sub-ms
+        resolution. The scheduler also keeps a millisecond timestamp for its
+        internal ageing logic.
+    */
     struct {
-        uint64_t scheduled; /**< \brief time when the thread became active */
-        uint64_t total;     /**< \brief total running CPU time for thread */
+        uint64_t scheduled;    /**< \brief time when the thread became active, in ns */
+        uint64_t total;        /**< \brief total running CPU time for thread, in ns */
+        uint64_t scheduled_ms; /**< \brief scheduler bookkeeping timestamp, in ms */
     } cpu_time;
 
     /** \brief  Thread label.
