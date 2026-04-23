@@ -147,6 +147,79 @@ KOS_INIT_FLAG_WEAK(fs_rnd_shutdown, true);
 KOS_INIT_FLAG_WEAK(library_init, true);
 KOS_INIT_FLAG_WEAK(library_shutdown, true);
 
+/* dc-load metadata */
+typedef struct {
+    uint32_t magic;
+    uint32_t size;
+    uint32_t version;
+    uint32_t capabilities;
+    uint32_t transport;
+    uint32_t console_ip;
+    uint32_t host_ip;
+    uint16_t host_port;
+    uint8_t  mac[6];
+    uint32_t baud_rate;
+    uint32_t argc;
+    char     argv_data[256];
+} kosload_info_t;
+
+struct args_data {
+    int argc;
+    char **argv;
+};
+
+static char default_program_name[] = "prog.elf";
+static char *default_argv[] = { default_program_name, NULL };
+static struct args_data main_args = { 1, default_argv };
+
+#define KOSLOAD_INFO_MAGIC        0x4b4f5349
+#define KOSLOAD_LOADER_BASE       0x8c004000
+#define KOSLOAD_LOADER_END        (KOSLOAD_LOADER_BASE + 0xb400)
+#define KOSLOAD_INFO_PTR_ADDR     (KOSLOAD_LOADER_BASE + 0x20)
+
+static bool addr_in_loader_ram(uintptr_t addr) {
+    return addr >= KOSLOAD_LOADER_BASE && addr < KOSLOAD_LOADER_END;
+}
+
+static const kosload_info_t *kosload_get_info(void) {
+    uintptr_t info_addr = *(const volatile uintptr_t *)KOSLOAD_INFO_PTR_ADDR;
+    const kosload_info_t *info;
+
+    /* Protect against invalid addresses produced by legacy dc-load */
+    if(!addr_in_loader_ram(info_addr))
+        return NULL;
+
+    info = (const kosload_info_t *)info_addr;
+
+    if(!info || info->magic != KOSLOAD_INFO_MAGIC)
+        return NULL;
+
+    return info;
+}
+
+/* Build argc/argv from kos-tool's NUL-separated argv buffer, if present. */
+static void args_init(void) {
+    const kosload_info_t *info = kosload_get_info();
+    char **argv;
+
+    if(!info || !info->argc)
+        return;
+
+    argv = malloc((info->argc + 1) * sizeof(*argv));
+    if(!argv)
+        return;
+
+    for(int i = 0, data_off = 0; i < info->argc; ++i) {
+        argv[i] = (char *)info->argv_data + data_off;
+        data_off += strlen(argv[i]) + 1;
+    }
+
+    argv[info->argc] = NULL;
+
+    main_args.argc = (int)info->argc;
+    main_args.argv = argv;
+}
+
 /* Auto-init stuff: override with a non-weak symbol if you don't want all of
    this to be linked into your code (and do the same with the
    arch_auto_shutdown function too). */
@@ -304,8 +377,11 @@ void arch_main(void) {
     /* Run ctors */
     _init();
 
+    /* Initialize main() arguments from dc-load, if present. */
+    args_init();
+
     /* Call the user's main function */
-    rv = main(0, NULL);
+    rv = main(main_args.argc, main_args.argv);
 
     /* Call kernel exit */
     exit(rv);
@@ -345,6 +421,11 @@ void arch_shutdown(void) {
     /* Shut down any other hardware things */
     hardware_shutdown();
 #endif
+
+    /* Clean up main_args */
+    if(main_args.argv != default_argv) {
+        free(main_args.argv);
+    }
 
     if(__kos_init_flags & INIT_MALLOCSTATS) {
         malloc_stats();
