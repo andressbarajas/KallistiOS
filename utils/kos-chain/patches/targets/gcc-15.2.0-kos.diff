@@ -144,4 +144,566 @@ diff -ruN gcc-15.2.0/libstdc++-v3/configure gcc-15.2.0-kos/libstdc++-v3/configur
 +    kos)	thread_header=gthr-kos.h ;;
      mcf)	thread_header=config/i386/gthr-mcf.h ;;
  esac
+
+diff -ruN -x .DS_Store gcc-15.2.0/gcc/config.gcc gcc-15.2.0-kos/gcc/config.gcc
+--- gcc-15.2.0/gcc/config.gcc	2025-04-25 01:18:00
++++ gcc-15.2.0-kos/gcc/config.gcc	2025-06-25 23:30:27
+@@ -2809,7 +2809,7 @@
+ 	tmake_file="mips/t-elf"
+ 	;;
+ mips64r5900-*-elf* | mips64r5900el-*-elf*)
+-	tm_file="elfos.h newlib-stdint.h ${tm_file} mips/elf.h mips/n32-elf.h"
++	tm_file="elfos.h newlib-stdint.h ${tm_file} mips/elf.h mips/n32-elf.h mips/ps2.h"
+ 	tmake_file="mips/t-elf"
+ 	tm_defines="${tm_defines} MIPS_ISA_DEFAULT=MIPS_ISA_MIPS3 MIPS_ABI_DEFAULT=ABI_N32"
+ 	;;
+diff -ruN -x .DS_Store gcc-15.2.0/gcc/config/mips/ps2.h gcc-15.2.0-kos/gcc/config/mips/ps2.h
+--- gcc-15.2.0/gcc/config/mips/ps2.h	1969-12-31 16:00:00
++++ gcc-15.2.0-kos/gcc/config/mips/ps2.h	2025-06-25 23:13:11
+@@ -0,0 +1,42 @@
++
++#undef STARTFILE_SPEC
++#define STARTFILE_SPEC \
++  "%{!shared: %{pg:gcrt1.o%s} %{!pg:crt1.o%s}} crti.o%s \
++   %{!shared:crtbegin.o%s} %{shared:crtbeginS.o%s}"
++
++#undef ENDFILE_SPEC
++#define ENDFILE_SPEC "crtend.o%s crtn.o%s"
++
++/* The following definitions are for shared object support. */
++/* Reference: gcc/config/mips/mips.h, gcc/config/mips/gnu-user.h */
++
++/* If we don't set MASK_ABICALLS, we can't allow usage of PIC.  */
++#undef TARGET_DEFAULT
++#define TARGET_DEFAULT MASK_ABICALLS
++
++/* -G is incompatible with -mabicalls which is the default, so only allow
++   objects in the small data section if the user explicitly asks for it.  */
++#undef MIPS_DEFAULT_GVALUE
++#define MIPS_DEFAULT_GVALUE 0
++
++/* Conditionally enable PIC depending on the presence of -mplt.  */
++#undef SUBTARGET_ASM_SPEC
++#define SUBTARGET_ASM_SPEC \
++  "%{!mno-abicalls:%{mplt:-call_nonpic;:-KPIC}}"
++
++/* Set some default options for the driver. Mainly, this optimizes default
++   options for executables and allows usage of shared objects if requested. */
++#define PS2_DRIVER_SELF_SPECS \
++  "%{mshared|mno-shared:;:%{" FPIE_OR_FPIC_SPEC ":-mshared;:-mno-shared}}",             \
++  "%{mplt|mno-plt:;:-mplt}",             \
++  /* -mplt has no effect without -mno-shared.  Simplify later   \
++     specs handling by removing a redundant option.  */     \
++  "%{!mno-shared:%<mplt}",            \
++  /* -mplt likewise has no effect for -mabi=64 without -msym32.  */ \
++  "%{mabi=64:%{!msym32:%<mplt}}"
++
++#undef DRIVER_SELF_SPECS
++#define DRIVER_SELF_SPECS \
++  MIPS_ISA_LEVEL_SPEC,    \
++  BASE_DRIVER_SELF_SPECS, \
++  PS2_DRIVER_SELF_SPECS
+diff --git a/gcc/config/mips/5900.md b/gcc/config/mips/5900.md
+new file mode 100644
+index 00000000000..1a54f3798d2
+--- /dev/null
++++ b/gcc/config/mips/5900.md
+@@ -0,0 +1,121 @@
++;; Copyright (C) 2002-2015 Free Software Foundation, Inc.
++;;
++;; This file is part of GCC.
++;;
++;; GCC is free software; you can redistribute it and/or modify
++;; it under the terms of the GNU General Public License as published by
++;; the Free Software Foundation; either version 3, or (at your option)
++;; any later version.
++;;
++;; GCC is distributed in the hope that it will be useful,
++;; but WITHOUT ANY WARRANTY; without even the implied warranty of
++;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++;; GNU General Public License for more details.
++;;
++;; You should have received a copy of the GNU General Public License
++;; along with GCC; see the file COPYING3.  If not see
++;; <http://www.gnu.org/licenses/>.
++;;
++;; R5900 instruction patterns and pipeline tuning.
++
++(define_automaton "r5900_alu,r5900_fpu,r5900_br,r5900_ls")
++
++(define_cpu_unit "r5900_alu0,r5900_alu1" "r5900_alu")
++(define_cpu_unit "r5900_c1" "r5900_fpu")
++(define_cpu_unit "r5900_br" "r5900_br")
++(define_cpu_unit "r5900_ls" "r5900_ls")
++
++(define_insn_reservation "r5900_alu" 1
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "unknown,prefetch,prefetchx,condmove,const,arith,
++			shift,slt,clz,trap,multi,nop,logical,signext,move"))
++ "r5900_alu0|r5900_alu1")
++
++(define_insn_reservation "r5900_loadstore" 1
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "load,store"))
++ "r5900_ls")
++
++(define_insn_reservation "r5900_fploadstore" 2
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "fpload,fpstore"))
++ "r5900_c1,nothing")
++
++(define_insn_reservation "r5900_fcvt" 4
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "fcvt"))
++ "r5900_c1,nothing*3")
++
++(define_insn_reservation "r5900_fmove" 4
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "fabs,fneg,fmove"))
++ "r5900_c1,nothing*3")
++
++(define_insn_reservation "r5900_fcmp" 4
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "fcmp"))
++ "r5900_c1,nothing*3")
++
++(define_insn_reservation "r5900_fadd" 4
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "fadd"))
++ "r5900_c1,nothing*3")
++
++(define_insn_reservation "r5900_fmul_single" 4
++  (and (eq_attr "cpu" "r5900")
++       (and (eq_attr "type" "fmul,fmadd")
++            (eq_attr "mode" "SF")))
++ "r5900_c1,nothing*3")
++
++(define_insn_reservation "r5900_fdiv_single" 8
++  (and (eq_attr "cpu" "r5900")
++       (and (eq_attr "type" "fdiv,frdiv")
++            (eq_attr "mode" "SF")))
++ "r5900_c1*7,nothing")
++
++(define_insn_reservation "r5900_fsqrt_single" 8
++  (and (eq_attr "cpu" "r5900")
++       (and (eq_attr "type" "fsqrt")
++            (eq_attr "mode" "SF")))
++ "r5900_c1*7,nothing")
++
++(define_insn_reservation "r5900_frsqrt_single" 14
++  (and (eq_attr "cpu" "r5900")
++       (and (eq_attr "type" "frsqrt")
++            (eq_attr "mode" "SF")))
++ "r5900_c1*13,nothing")
++
++(define_insn_reservation "r5900_xfer" 2
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "mfc,mtc"))
++ "r5900_c1+r5900_ls,nothing")
++
++(define_insn_reservation "r5900_branch" 1
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "branch,jump,call"))
++ "r5900_br")
++
++(define_insn_reservation "r5900_hilo" 1
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "mfhi,mflo,mthi,mtlo"))
++ "r5900_alu0")
++
++(define_insn_reservation "r5900_imul" 4
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "imul,imul3,imadd"))
++ "r5900_alu0*2,nothing*2")
++
++(define_insn_reservation "r5900_idiv" 37
++  (and (eq_attr "cpu" "r5900")
++       (eq_attr "type" "idiv,idiv3"))
++ "r5900_alu0*37")
++
++;; RSQRT
++(define_insn "rsqrtsf"
++  [(set (match_operand:SF 0 "register_operand" "=f")
++	(div:SF (match_operand:SF 1 "register_operand" "f")
++		  (sqrt:SF (match_operand:SF 2 "register_operand" "f"))))]
++  "TARGET_MIPS5900"
++  "rsqrt.s\t%0,%1,%2"
++  [(set_attr "type" "frsqrt")
++   (set_attr "mode" "SF")])
+diff --git a/gcc/config/mips/mips.cc b/gcc/config/mips/mips.cc
+index 81eaa3cfb2a..6db260e2c2b 100644
+--- a/gcc/config/mips/mips.cc
++++ b/gcc/config/mips/mips.cc
+@@ -20555,6 +20555,11 @@ mips_option_override (void)
+     error ("unsupported combination: %s",
+ 	   "-march=r5900 -mhard-float -mdouble-float");
+
++  /* The R5900 does not support some MIPS16 instructions.  */
++  if (TARGET_MIPS5900 && ((mips_base_compression_flags & MASK_MIPS16) != 0))
++	  error("unsupported combination: %s",
++		  "-march=r5900 -mips16");
++
+   /* If a -mlong* option was given, check that it matches the ABI,
+      otherwise infer the -mlong* setting from the other options.  */
+   if ((target_flags_explicit & MASK_LONG64) != 0)
+diff --git a/gcc/config/mips/mips.h b/gcc/config/mips/mips.h
+index e224ade2a1a..a65640d77a5 100644
+--- a/gcc/config/mips/mips.h
++++ b/gcc/config/mips/mips.h
+@@ -1199,7 +1199,7 @@ struct mips_cpu_info {
+ #define ISA_HAS_IEEE_754_2008	(mips_isa_rev >= 2)
+ 
+ /* ISA has count leading zeroes/ones instruction (not implemented).  */
+-#define ISA_HAS_CLZ_CLO		(mips_isa_rev >= 1 && !TARGET_MIPS16)
++#define ISA_HAS_CLZ_CLO		(mips_isa_rev >= 1 && !TARGET_MIPS16 && !TARGET_MIPS5900)
+ 
+ /* ISA has count trailing zeroes/ones instruction.  */
+ #define ISA_HAS_CTZ_CTO		(TARGET_LOONGSON_EXT2)
+@@ -1262,7 +1262,7 @@ struct mips_cpu_info {
+ #define ISA_HAS_9BIT_DISPLACEMENT	(mips_isa_rev >= 6		\
+ 					 || ISA_HAS_MIPS16E2)
+ 
+-#define ISA_HAS_FMIN_FMAX	(mips_isa_rev >= 6)
++#define ISA_HAS_FMIN_FMAX	((mips_isa_rev >= 6) || TARGET_MIPS5900)
+ 
+ #define ISA_HAS_FRINT		(mips_isa_rev >= 6)
+ 
+diff --git a/gcc/config/mips/mips.md b/gcc/config/mips/mips.md
+index aadf4dd676e..6846164df7a 100644
+--- a/gcc/config/mips/mips.md
++++ b/gcc/config/mips/mips.md
+@@ -1121,6 +1121,7 @@
+ 
+ (define_delay (and (eq_attr "type" "branch")
+ 		   (not (match_test "TARGET_MIPS16"))
++		   (not (match_test "TARGET_FIX_R5900"))
+ 		   (eq_attr "branch_likely" "yes"))
+   [(eq_attr "can_delay" "yes")
+    (nil)
+@@ -1130,6 +1131,7 @@
+ ;; not annul on false.
+ (define_delay (and (eq_attr "type" "branch,simd_branch")
+ 		   (not (match_test "TARGET_MIPS16"))
++		   (not (match_test "TARGET_FIX_R5900"))
+ 		   (ior (match_test "TARGET_CB_NEVER")
+ 			(and (eq_attr "compact_form" "maybe")
+ 			     (not (match_test "TARGET_CB_ALWAYS")))
+@@ -1200,6 +1202,7 @@
+ (include "5000.md")
+ (include "5400.md")
+ (include "5500.md")
++(include "5900.md")
+ (include "6000.md")
+ (include "7000.md")
+ (include "9000.md")
+@@ -1805,7 +1808,7 @@
+ 		 (match_operand:SI 3 "register_operand" "l,l,l,d")))
+    (clobber (match_scratch:SI 4 "=X,X,3,l"))
+    (clobber (match_scratch:SI 5 "=X,X,X,&d"))]
+-  "TARGET_MIPS3900 && !TARGET_MIPS16"
++  "(TARGET_MIPS3900 || TARGET_MIPS5900) && !TARGET_MIPS16"
+   "@
+     madd\t%1,%2
+     madd\t%1,%2
+diff --git a/include/longlong.h b/include/longlong.h
+index 5ae250f7192..75815cec152 100644
+--- a/include/longlong.h
++++ b/include/longlong.h
+@@ -857,6 +857,17 @@ extern UDItype __umulsidi3 (USItype, USItype);
+ #endif
+ 
+ #if defined (__mips__) && W_TYPE_SIZE == 32
++/* Force R5900 to use mult for mulsidi3, this is used in muldi3 */
++#ifdef _MIPS_ARCH_R5900
++#define __umulsidi3(u, v) \
++  ({UDItype __w;							\
++    __asm__ ("multu	%1,%2\n\tpmfhl.lw %0"				\
++	     : "=d" (__w)						\
++	     : "d" ((USItype) (u)),					\
++	       "d" ((USItype) (v))					\
++	     : "hi", "lo");						\
++    __w; })
++#endif
+ #define umul_ppmm(w1, w0, u, v)						\
+   do {									\
+     UDItype __x = (UDItype) (USItype) (u) * (USItype) (v);		\
+@@ -866,7 +877,7 @@ extern UDItype __umulsidi3 (USItype, USItype);
+ #define UMUL_TIME 10
+ #define UDIV_TIME 100
+ 
+-#if (__mips == 32 || __mips == 64) && ! defined (__mips16)
++#if (__mips == 32 || __mips == 64) && !defined (__mips16) && !defined(_MIPS_ARCH_R5900)
+ #define count_leading_zeros(COUNT,X)	((COUNT) = __builtin_clz (X))
+ #define COUNT_LEADING_ZEROS_0 32
+ #endif
+diff --git a/libatomic/configure b/libatomic/configure
+index 67b3a6388d7..20e42251256 100755
+--- a/libatomic/configure
++++ b/libatomic/configure
+@@ -1270,6 +1270,13 @@ build=$build_alias
+ host=$host_alias
+ target=$target_alias
+
++# PS2 SPECIFIC CODE
++# Skipping some Tests for PS2 platform because ps2sdk libraries aren't ready yet.
++skipTests=0
++if [ "$target" == "mips64r5900el-ps2-elf" ]; then
++   skipTests=1
++fi
++
+ # FIXME: To remove some day.
+ if test "x$host_alias" != x; then
+   if test "x$build_alias" = x; then
+@@ -3826,7 +3833,7 @@ test "$ac_cv_exeext" = no && ac_cv_exeext=
+ else
+   ac_file=''
+ fi
+-if test -z "$ac_file"; then :
++if test -z "$ac_file" && [ "$skipTests" -eq "0" ]; then :
+   { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+ $as_echo "no" >&6; }
+ $as_echo "$as_me: failed program was:" >&5
+@@ -3874,7 +3881,7 @@ for ac_file in conftest.exe conftest conftest.*; do
+     * ) break;;
+   esac
+ done
+-else
++elif [ "$skipTests" -eq "0" ]; then :
+   { { $as_echo "$as_me:${as_lineno-$LINENO}: error: in \`$ac_pwd':" >&5
+ $as_echo "$as_me: error: in \`$ac_pwd':" >&2;}
+ as_fn_error $? "cannot compute suffix of executables: cannot compile and link
+@@ -14994,7 +15001,7 @@ pthread_t t; pthread_create(&t,NULL,g,NULL);
+ _ACEOF
+ if ac_fn_c_try_link "$LINENO"; then :
+
+-else
++elif [ "$skipTests" -eq "0" ]; then :
+   as_fn_error $? "Pthreads are required to build libatomic" "$LINENO" 5
+ fi
+ rm -f core conftest.err conftest.$ac_objext \
+
+# Using POSIX atomic implementation
+diff --git a/libatomic/configure.tgt b/libatomic/configure.tgt
+index 606d249116a..ed362352ddf 100644
+--- a/libatomic/configure.tgt
++++ b/libatomic/configure.tgt
+@@ -148,7 +148,7 @@ case "${target}" in
+ 	tmake_file="t-aix"
+ 	;;
+
+-  *-*-linux* | *-*-gnu* | *-*-k*bsd*-gnu \
++  *-*-linux* | *-*-gnu* | *-*-k*bsd*-gnu | *-ps2-elf* \
+   | *-*-netbsd* | *-*-freebsd* | *-*-openbsd* | *-*-dragonfly* \
+   | *-*-solaris2* | *-*-sysv4* | *-*-irix6* | *-*-osf* | *-*-hpux11* \
+   | *-*-darwin* | *-*-aix* | *-*-cygwin*)
+diff --git a/libgcc/config.host b/libgcc/config.host
+index d36f0e34a3b..ffdd5fad335 100644
+--- a/libgcc/config.host
++++ b/libgcc/config.host
+@@ -168,7 +168,11 @@ mips*-*-*)
+ 	cpu_type=mips
+ 	tmake_file="mips/t-mips"
+ 	if test "${libgcc_cv_mips_hard_float}" = yes; then
++	    if test "${libgcc_cv_mips_single_float}" = yes; then
++                tmake_file="${tmake_file} t-hardfp-sf t-hardfp"
++	    else
+ 		tmake_file="${tmake_file} t-hardfp-sfdf t-hardfp"
++	    fi
+ 	else
+ 		tmake_file="${tmake_file} t-softfp-sfdf"
+ 	fi
+@@ -1069,19 +1073,16 @@ mips*-*-netbsd*)			# NetBSD/mips, either endian.
+ mips*-*-linux*)				# Linux MIPS, either endian.
+ 	extra_parts="$extra_parts crtfastmath.o"
+ 	tmake_file="${tmake_file} t-crtfm"
+-	case ${host} in
+-	  mips64r5900* | mipsr5900*)
+-	    # The MIPS16 support code uses floating point
+-	    # instructions that are not supported on r5900.
+-	    ;;
+-	  *)
++    if test "${libgcc_cv_mips16}" = yes; then
+ 	    tmake_file="${tmake_file} mips/t-mips16 t-slibgcc-libgcc"
+-	    ;;
+-	esac
++    fi
+ 	md_unwind_header=mips/linux-unwind.h
+ 	;;
+ mips*-sde-elf*)
+-	tmake_file="$tmake_file mips/t-crtstuff mips/t-mips16"
++	tmake_file="$tmake_file mips/t-crtstuff"
++    if test "${libgcc_cv_mips16}" = yes; then
++	  tmake_file="${tmake_file} mips/t-mips16"
++    fi
+ 	case "${with_newlib}" in
+ 	  yes)
+ 	    # newlib / libgloss.
+@@ -1111,7 +1112,10 @@ mipsisa64sb1-*-elf* | mipsisa64sb1el-*-elf*)
+ 	extra_parts="$extra_parts crti.o crtn.o"
+ 	;;
+ mips-*-elf* | mipsel-*-elf*)
+-	tmake_file="$tmake_file mips/t-elf mips/t-crtstuff mips/t-mips16"
++	tmake_file="$tmake_file mips/t-elf mips/t-crtstuff"
++    if test "${libgcc_cv_mips16}" = yes; then
++	  tmake_file="${tmake_file} mips/t-mips16"
++    fi
+ 	extra_parts="$extra_parts crti.o crtn.o"
+ 	;;
+ mipsr5900-*-elf* | mipsr5900el-*-elf*)
+@@ -1119,7 +1123,10 @@ mipsr5900-*-elf* | mipsr5900el-*-elf*)
+ 	extra_parts="$extra_parts crti.o crtn.o"
+ 	;;
+ mips64-*-elf* | mips64el-*-elf*)
+-	tmake_file="$tmake_file mips/t-elf mips/t-crtstuff mips/t-mips16"
++	tmake_file="$tmake_file mips/t-elf mips/t-crtstuff"
++    if test "${libgcc_cv_mips16}" = yes; then
++	  tmake_file="${tmake_file} mips/t-mips16"
++    fi
+ 	extra_parts="$extra_parts crti.o crtn.o"
+ 	;;
+ mips64r5900-*-elf* | mips64r5900el-*-elf*)
+@@ -1135,7 +1142,10 @@ mips64orion-*-elf* | mips64orionel-*-elf*)
+ 	extra_parts="$extra_parts crti.o crtn.o"
+ 	;;
+ mips*-*-rtems*)
+-	tmake_file="$tmake_file mips/t-elf mips/t-crtstuff mips/t-mips16"
++	tmake_file="$tmake_file mips/t-elf mips/t-crtstuff"
++    if test "${libgcc_cv_mips16}" = yes; then
++	  tmake_file="${tmake_file} mips/t-mips16"
++    fi
+ 	extra_parts="$extra_parts crti.o crtn.o"
+ 	;;
+ mips-wrs-vxworks)
+diff --git a/libgcc/config/mips/sfp-machine.h b/libgcc/config/mips/sfp-machine.h
+index 34c72a2f60a..bdd36328bee 100644
+--- a/libgcc/config/mips/sfp-machine.h
++++ b/libgcc/config/mips/sfp-machine.h
+@@ -22,7 +22,7 @@ a copy of the GCC Runtime Library Exception along with this program;
+ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
+ <http://www.gnu.org/licenses/>.  */
+ 
+-#ifdef __mips64
++#if defined(__mips64) && !defined(_MIPS_ARCH_R5900)
+ #define _FP_W_TYPE_SIZE		64
+ #define _FP_W_TYPE		unsigned long long
+ #define _FP_WS_TYPE		signed long long
+diff --git a/libgcc/config/t-hardfp-sf b/libgcc/config/t-hardfp-sf
+new file mode 100644
+index 00000000000..e63ad470751
+--- /dev/null
++++ b/libgcc/config/t-hardfp-sf
+@@ -0,0 +1,32 @@
++# Copyright (C) 2014-2015 Free Software Foundation, Inc.
++
++# This file is part of GCC.
++
++# GCC is free software; you can redistribute it and/or modify
++# it under the terms of the GNU General Public License as published by
++# the Free Software Foundation; either version 3, or (at your option)
++# any later version.
++
++# GCC is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++# GNU General Public License for more details.
++
++# You should have received a copy of the GNU General Public License
++# along with GCC; see the file COPYING3.  If not see
++# <http://www.gnu.org/licenses/>.
++
++hardfp_float_modes := sf
++# di and ti are provided by libgcc2.c where needed.
++hardfp_int_modes := si
++hardfp_extensions :=
++hardfp_truncations :=
++
++# Emulate 64 bit float:
++FPBIT = true
++DPBIT = true
++# Don't build functions handled by 32 bit hardware:
++LIB2FUNCS_EXCLUDE = _addsub_sf _mul_sf _div_sf \
++    _fpcmp_parts_sf _compare_sf _eq_sf _ne_sf _gt_sf _ge_sf \
++    _lt_sf _le_sf _unord_sf _si_to_sf _sf_to_si _negate_sf \
++    _thenan_sf _sf_to_usi _usi_to_sf
+diff --git a/libgcc/configure b/libgcc/configure
+index 18418336c9b..fd9016813df 100755
+--- a/libgcc/configure
++++ b/libgcc/configure
+@@ -5109,6 +5109,48 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+ fi
+ { $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgcc_cv_mips_hard_float" >&5
+ $as_echo "$libgcc_cv_mips_hard_float" >&6; }
++  { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether the target is single-float" >&5
++$as_echo_n "checking whether the target is single-float... " >&6; }
++if test "${libgcc_cv_mips_single_float+set}" = set; then :
++  $as_echo_n "(cached) " >&6
++else
++  cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++#ifndef __mips_single_float
++     #error FOO
++     #endif
++_ACEOF
++if ac_fn_c_try_compile "$LINENO"; then :
++  libgcc_cv_mips_single_float=yes
++else
++  libgcc_cv_mips_single_float=no
++fi
++rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
++fi
++{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgcc_cv_mips_single_float" >&5
++$as_echo "$libgcc_cv_mips_single_float" >&6; }
++  # Some targets (i.e. R5900) don't support some MIPS16 instructions.
++  { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether the target supports the MIPS16 ASE" >&5
++$as_echo_n "checking whether the target supports MIPS16 ASE... " >&6; }
++if test "${libgcc_cv_mips16+set}" = set; then :
++  $as_echo_n "(cached) " >&6
++else
++  CFLAGS_hold=$CFLAGS
++		 CFLAGS="$CFLAGS -mips16"
++		 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++int i;
++_ACEOF
++if ac_fn_c_try_compile "$LINENO"; then :
++  libgcc_cv_mips16=yes
++else
++  libgcc_cv_mips16=no
++fi
++rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
++	CFLAGS=$CFLAGS_hold
++fi
++{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $libgcc_cv_mips16" >&5
++$as_echo "$libgcc_cv_mips16" >&6; }
+ esac
+ 
+ # Determine the version of glibc, if any, used on the target.
+diff --git a/libgcc/configure.ac b/libgcc/configure.ac
+index 85e4f1bc48b..3baa95353be 100644
+--- a/libgcc/configure.ac
++++ b/libgcc/configure.ac
+@@ -344,6 +344,23 @@ mips*-*-*)
+     ])],
+     [libgcc_cv_mips_hard_float=yes],
+     [libgcc_cv_mips_hard_float=no])])
++  AC_CACHE_CHECK([whether the target is single-float],
++		 [libgcc_cv_mips_single_float],
++		 [AC_COMPILE_IFELSE(
++    [#ifndef __mips_single_float
++     #error FOO
++     #endif],
++    [libgcc_cv_mips_single_float=yes],
++    [libgcc_cv_mips_single_float=no])])
++  # Some targets (i.e. R5900) don't support some MIPS16 instructions.
++  AC_CACHE_CHECK([whether the target supports the MIPS16 ASE],
++		 [libgcc_cv_mips16],
++		 [CFLAGS_hold=$CFLAGS
++		 CFLAGS="$CFLAGS -mips16"
++		 AC_COMPILE_IFELSE([[int i;]],
++    [libgcc_cv_mips16=yes],
++    [libgcc_cv_mips16=no])
++	CFLAGS=$CFLAGS_hold])
+ esac
+ 
+ # Determine the version of glibc, if any, used on the target.
  

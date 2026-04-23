@@ -52,6 +52,14 @@ CXX_FOR_TARGET = $(target)-$(GXX)
 
 # Handle macOS
 ifdef MACOS
+  # GCC's t-hardfp uses GNU sed extensions (\| alternation) not supported
+  # by macOS BSD sed. Use Homebrew's gnu-sed if available.
+  # GCC's build system also requires GNU m4, which Homebrew installs as gm4.
+  # Add Homebrew's m4 to PATH so it is found before macOS's BSD m4.
+  ifeq ($(shell command -v brew >/dev/null 2>&1 && echo yes),yes)
+    PATH := $(shell brew --prefix gnu-sed)/libexec/gnubin:$(PATH)
+    PATH := $(shell brew --prefix m4)/bin:$(PATH)
+  endif
   ifdef MACOS_MOJAVE_AND_UP
     # Starting from macOS Mojave (10.14+)
     sdkroot = $(shell xcrun --sdk macosx --show-sdk-path)

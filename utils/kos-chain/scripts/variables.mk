@@ -14,3 +14,6 @@ PATH         := $(toolchain_path)/bin:$(PATH)
 
 arch         := $(word 1,$(subst -, ,$(target)))
 gcc_arch     := $(subst powerpc,rs6000,$(arch))
+
+# Newlib machine directory (defaults to arch, can be overridden in profiles)
+newlib_machine_dir ?= $(arch)

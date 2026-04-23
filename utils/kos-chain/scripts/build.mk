@@ -1,6 +1,12 @@
 # KallistiOS Toolchain Builder (kos-chain)
 
+ifeq (1,$(binutils_only))
+build: build-binutils
+else ifeq (1,$(without_newlib))
+build: build-gcc-pass1
+else
 build: build-done
+endif
 build-gcc: build-gcc-pass2
 build-newlib: build-newlib-only fixup-newlib
 

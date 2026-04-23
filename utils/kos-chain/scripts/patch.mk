@@ -30,8 +30,8 @@ gcc-fixup: fetch-gcc
 patch-newlib: newlib-fixup
 newlib-fixup: fetch-newlib
 	@echo "+++ Copying required KOS files into newlib directory..."
-	mkdir -p $(src_dir)/newlib/libc/machine/$(arch)/sys
-	cp $(kos_base)/include/sys/lock.h $(src_dir)/newlib/libc/machine/$(arch)/sys/lock.h
+	mkdir -p $(src_dir)/newlib/libc/machine/$(newlib_machine_dir)/sys
+	cp $(kos_base)/include/sys/lock.h $(src_dir)/newlib/libc/machine/$(newlib_machine_dir)/sys/lock.h
 	cp $(kos_base)/include/sys/lock.h $(src_dir)/newlib/libc/include/sys/lock.h
 
 # This is a common 'patch_apply' function used in all the cases
@@ -75,7 +75,8 @@ patch-binutils: diff_patches += $(wildcard $(patches)/targets/$(target)/$(src_di
 patch-binutils: diff_patches += $(wildcard $(patches)/hosts/$(host_triplet)/$(src_dir)*.diff)
 patch-binutils:
 	$(call patch_apply)
-	$(call update_config_guess_sub)
+	# Don't overwrite patched config.sub, or dvp-elf falls back to dvp-unknown and configure fails.
+	$(call update_configs,config.guess)
 
 # GNU Compiler Collection (GCC)
 patch-gcc: patch_target_name = GCC
