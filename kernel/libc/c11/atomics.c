@@ -4,9 +4,11 @@
    Copyright (C) 2023 Falco Girgis
 */
 
-/* This file provides the additional symbols required to provide
-   support for C11 atomics with the "-matomic-model=soft-imask"
-   build flag.
+/* This file provides the C11 atomic support symbols GCC expects from
+   libatomic, which the bare-metal toolchains do not ship. The compiler
+   emits calls to them whenever it cannot expand an atomic operation
+   inline, either because the target has no suitable instruction or
+   because the operation is wider than one it can perform atomically.
 */
 
 #include <kos/cache.h>
@@ -192,6 +194,22 @@ bool __atomic_compare_exchange(size_t size,
         memcpy(expected, (const void *)ptr, size);
         return false;
     }
+}
+
+/* atomic_flag support: targets without an inline test-and-set sequence
+   call these instead. */
+__weak_symbol bool __atomic_test_and_set(volatile void *ptr, int model) {
+    (void)model;
+    irq_disable_scoped();
+    const bool ret = *(volatile uint8_t *)ptr != 0;
+    *(volatile uint8_t *)ptr = __GCC_ATOMIC_TEST_AND_SET_TRUEVAL;
+    return ret;
+}
+
+__weak_symbol void __atomic_clear(volatile void *ptr, int model) {
+    (void)model;
+    irq_disable_scoped();
+    *(volatile uint8_t *)ptr = 0;
 }
 
 /* All atomics for builtin types are lock-free, while our
