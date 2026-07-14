@@ -31,6 +31,9 @@ is coming soon to KallistiOS.
 - **playstation2**: `mips64r5900el-ps2-elf` toolchain, targeting the **Emotion
 Engine (EE)**, the MIPS R5900 primary CPU of the Sony PlayStation 2. This
 toolchain is required for PlayStation 2 development.
+- **iop**: `mipsel-elf` toolchain, targeting the PlayStation 2's **I/O Processor
+(IOP)**, a MIPS R3000A core that handles I/O and the SPU. This toolchain is
+built without newlib; the IOP gets its C library from KallistiOS.
 
 ## Getting started
 
