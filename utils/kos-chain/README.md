@@ -34,6 +34,10 @@ toolchain is required for PlayStation 2 development.
 - **iop**: `mipsel-elf` toolchain, targeting the PlayStation 2's **I/O Processor
 (IOP)**, a MIPS R3000A core that handles I/O and the SPU. This toolchain is
 built without newlib; the IOP gets its C library from KallistiOS.
+- **dvp**: `dvp-elf` toolchain, providing **dvp-as** (installed as
+`dvp-elf-as`), an assembler for the PlayStation 2's **Vector Processing Units
+(VU)**. It assembles the VU microcode instruction set and the VIF/GIF/DMA
+container layer, and is only necessary for compiling custom VU code.
 
 ## Getting started
 
