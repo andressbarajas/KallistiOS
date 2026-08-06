@@ -150,7 +150,8 @@ void arch_stk_trace_at(uintptr_t sp, size_t n) {
             continue;
         }
 
-        dbgio_printf("   %08lx\n", (unsigned long)ret_addr);
+        /* Log the call site (the BSR/BSRF/JSR itself) */
+        dbgio_printf("   %08lx\n", (unsigned long)(ret_addr - 4));
         ++printed;
 
         if(printed >= max_frames) {

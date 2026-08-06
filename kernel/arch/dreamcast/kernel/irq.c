@@ -163,7 +163,8 @@ void irq_dump_regs(int code, irq_t evt) {
                 dbglog(DBG_DEAD, " %08lx", irq_srt_addr->pr);
 
             while(arch_stk_unwind_step(sp, &ret_addr, &next_sp)) {
-                dbglog(DBG_DEAD, " %08x", ret_addr);
+                /* Log the call site (the BSR/BSRF/JSR itself) */
+                dbglog(DBG_DEAD, " %08x", ret_addr - 4);
                 sp = next_sp;
             }
         }
