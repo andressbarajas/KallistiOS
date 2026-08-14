@@ -28,6 +28,9 @@ toolchain is optional and only necessary for compiling custom AICA drivers.
 - **GameCube**: `powerpc-eabi` toolchain, the cross-compiler toolchain targeting
 the **IBM Gekko PowerPC (PPC) CPU** in the Nintendo GameCube. GameCube support
 is coming soon to KallistiOS.
+- **psp**: `mipsel-psp-elf` toolchain, targeting the **Allegrex**, the
+MIPS32-derived CPU of the Sony PlayStation Portable. The Allegrex has a
+single-precision FPU, so the toolchain defaults to `-msingle-float`.
 
 ## Getting started
 

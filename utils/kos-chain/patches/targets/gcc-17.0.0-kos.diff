@@ -8,6 +8,45 @@ diff -ruN gcc-17.0.0/gcc/config/elfos.h gcc-17.0.0-kos/gcc/config/elfos.h
 +
 +#define TARGET_OS_CPP_BUILTINS()			\
 +  builtin_define ("__KOS_GCC_PATCHLEVEL__=2025062800")
+diff -ruN gcc-17.0.0/gcc/config/mips/mips.cc gcc-17.0.0-kos/gcc/config/mips/mips.cc
+--- gcc-17.0.0/gcc/config/mips/mips.cc	2026-04-30 01:33:20
++++ gcc-17.0.0-kos/gcc/config/mips/mips.cc	2026-08-14 12:19:25
+@@ -3609,6 +3609,10 @@
+ /* The __tls_get_attr symbol.  */
+ static GTY(()) rtx mips_tls_symbol;
+ 
++/* The __mips_get_tp symbol -- thread-pointer helper for ISAs that predate
++   the rdhwr instruction.  */
++static GTY(()) rtx mips_generic_get_tp_symbol;
++
+ /* Return an instruction sequence that calls __tls_get_addr.  SYM is
+    the TLS symbol we are referencing and TYPE is the symbol type to use
+    (either global dynamic or local dynamic).  V0 is an RTX for the
+@@ -3653,6 +3657,24 @@
+ 	mips16_rdhwr_stub = new mips16_rdhwr_one_only_stub ();
+       fn = mips16_stub_call_address (mips16_rdhwr_stub);
+       emit_insn (PMODE_INSN (gen_tls_get_tp_mips16, (tp, fn)));
++    }
++  else if (mips_isa_rev < 2)
++    {
++      /* rdhwr only exists from MIPS32r2 onward.  On a pre-r2 core running
++	 bare metal there is no kernel below us to trap and emulate it (the
++	 PSP's Allegrex is one such core), so the usual thread-pointer
++	 sequence would fault.  Call the KOS-provided helper __mips_get_tp
++	 instead.  */
++      rtx v0 = gen_rtx_REG (Pmode, GP_RETURN);
++      rtx_insn *insn;
++
++      if (!mips_generic_get_tp_symbol)
++	mips_generic_get_tp_symbol = init_one_libfunc ("__mips_get_tp");
++
++      insn = mips_expand_call (MIPS_CALL_NORMAL, v0, mips_generic_get_tp_symbol,
++			       const0_rtx, NULL_RTX, false);
++      RTL_CONST_CALL_P (insn) = 1;
++      emit_move_insn (tp, v0);
+     }
+   else
+     emit_insn (PMODE_INSN (gen_tls_get_tp, (tp)));
 diff -ruN gcc-17.0.0/gcc/configure gcc-17.0.0-kos/gcc/configure
 --- gcc-17.0.0/gcc/configure	2025-04-17 16:01:33.801051764 -0600
 +++ gcc-17.0.0-kos/gcc/configure	2025-04-17 16:01:42.913094480 -0600

@@ -1,3 +1,29 @@
+diff --color -ruN newlib-4.6.0.20260123/configure newlib-4.6.0.20260123-kos/configure
+--- newlib-4.6.0.20260123/configure	2026-01-23 14:12:49
++++ newlib-4.6.0.20260123-kos/configure	2026-08-14 12:18:54
+@@ -3985,6 +3985,9 @@
+   | mips*-*-irix* | mips*-*-lnews* | mips*-*-riscos*)
+     noconfigdirs="$noconfigdirs ld gas gprof"
+     ;;
++  mipsel-psp-*)
++    noconfigdirs="$noconfigdirs target-libgloss"
++    ;;
+   mips*-*-*)
+     noconfigdirs="$noconfigdirs gprof"
+     ;;
+diff --color -ruN newlib-4.6.0.20260123/configure.ac newlib-4.6.0.20260123-kos/configure.ac
+--- newlib-4.6.0.20260123/configure.ac	2026-01-23 14:12:49
++++ newlib-4.6.0.20260123-kos/configure.ac	2026-08-14 12:18:54
+@@ -1269,6 +1269,9 @@
+   | mips*-*-irix* | mips*-*-lnews* | mips*-*-riscos*)
+     noconfigdirs="$noconfigdirs ld gas gprof"
+     ;;
++  mipsel-psp-*)
++    noconfigdirs="$noconfigdirs target-libgloss"
++    ;;
+   mips*-*-*)
+     noconfigdirs="$noconfigdirs gprof"
+     ;;
 diff --color -ruN newlib-4.6.0.20260123/newlib/configure.host newlib-4.6.0.20260123-kos/newlib/configure.host
 --- newlib-4.6.0.20260123/newlib/configure.host	2024-02-10 09:30:58.772247624 -0600
 +++ newlib-4.6.0.20260123-kos/newlib/configure.host	2024-02-10 09:31:16.329331366 -0600
@@ -19,7 +45,28 @@ diff --color -ruN newlib-4.6.0.20260123/newlib/configure.host newlib-4.6.0.20260
  	;;
    sparc*)
  	libm_machine_dir=sparc
-@@ -823,7 +823,11 @@
+@@ -540,6 +540,9 @@
+   microblaze*-*-*)
+ 	machine_dir=microblaze
+ 	;;
++  mipsel-psp-*)
++	newlib_cflags="${newlib_cflags} -G0 -DREENTRANT_SYSCALLS_PROVIDED -DMALLOC_PROVIDED -DABORT_PROVIDED -DHAVE_FCNTL -ffunction-sections -fdata-sections"
++	;;
+   mmix-knuth-mmixware)
+ 	sys_dir=mmixware
+ 	;;
+@@ -783,6 +786,10 @@
+ 	default_newlib_io_long_long="yes"
+ 	newlib_cflags="${newlib_cflags} -DMISSING_SYSCALL_NAMES"
+ 	;;
++  mipsel-psp-elf*)
++	syscall_dir=syscalls
++	default_newlib_io_long_long="yes"
++	;;
+   mips*-*-elf*)
+ 	default_newlib_io_long_long="yes"
+ 	newlib_cflags="${newlib_cflags} -DMISSING_SYSCALL_NAMES"
+@@ -823,7 +830,11 @@
  	default_newlib_io_long_long="yes"
  	newlib_cflags="${newlib_cflags} -DMISSING_SYSCALL_NAMES"
  	;;
