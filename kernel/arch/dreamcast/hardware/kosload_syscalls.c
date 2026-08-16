@@ -13,16 +13,16 @@
 
 #include <kos/irq.h>
 
-/* This is the address where the function pointer for the dcload syscall is fetched from */
-#define VEC_DCLOAD        (MEM_AREA_P1_BASE | 0x0C004008)
+/* This is the address where the function pointer for the kosload syscall is fetched from */
+#define VEC_KOSLOAD       (MEM_AREA_P1_BASE | 0x0C004008)
 
 /*
-    This is the single syscall dcload provides. It is then multiplexed out based on the `cmd`
+    This is the single syscall kosload provides. It is then multiplexed out based on the `cmd`
     parameter.
 */
 
-int dcload_syscall_native(dcload_cmd_t cmd, void *param1, void *param2, void *param3) {
-    uintptr_t *syscall_ptr = (uintptr_t *)VEC_DCLOAD;
+int kosload_syscall_native(kosload_cmd_t cmd, void *param1, void *param2, void *param3) {
+    uintptr_t *syscall_ptr = (uintptr_t *)VEC_KOSLOAD;
     int (*syscall)() = (int (*)())(*syscall_ptr);
 
     /* Disable IRQs until the syscall returns */

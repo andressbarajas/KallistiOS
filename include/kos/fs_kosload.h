@@ -6,20 +6,20 @@
 */
 
 /** \file    kos/fs_kosload.h
-    \brief   Implementation of dcload "filesystem".
-    \ingroup vfs_dcload
+    \brief   Implementation of kosload "filesystem".
+    \ingroup vfs_kosload
 
-    This file contains declarations related to using dcload, both in its -ip and
+    This file contains declarations related to using kosload, both in its -ip and
     -serial forms. This is only used for dcload-ip support if the internal
     network stack is not initialized at start via KOS_INIT_FLAGS().
 
     \author Andrew Kieschnick
 */
 
-#ifndef __KOS_FS_DCLOAD_H
-#define __KOS_FS_DCLOAD_H
+#ifndef __KOS_FS_KOSLOAD_H
+#define __KOS_FS_KOSLOAD_H
 
-/* Definitions for the "dcload" file system */
+/* Definitions for the "kosload" file system */
 
 #include <kos/cdefs.h>
 __BEGIN_DECLS
@@ -30,7 +30,7 @@ __BEGIN_DECLS
 
 #include <arch/kosload.h>
 
-/** \defgroup vfs_dcload    PC
+/** \defgroup vfs_kosload    PC
     \brief                  VFS driver for accessing a remote PC via
                             DC-Load/Tool
     \ingroup                vfs
@@ -39,33 +39,33 @@ __BEGIN_DECLS
 */
 
 /* \cond */
-extern dbgio_handler_t dbgio_dcload;
+extern dbgio_handler_t dbgio_kosload;
 /* \endcond */
 
-/* dcload magic value */
-/** \brief  The dcload magic value! */
-#define DCLOADMAGICVALUE 0xdeadbeef
+/* kosload magic value */
+/** \brief  The kosload magic value! */
+#define KOSLOADMAGICVALUE 0xdeadbeef
 
-/** \brief  The address of the dcload magic value */
-#define DCLOADMAGICADDR (unsigned int *)DCLOAD_MAGIC_ADDR
+/** \brief  The address of the kosload magic value */
+#define KOSLOADMAGICADDR (unsigned int *)KOSLOAD_MAGIC_ADDR
 
 /* Are we using dc-load-serial or dc-load-ip? */
-#define DCLOAD_TYPE_NONE    -1      /**< \brief No dcload connection */
-#define DCLOAD_TYPE_SER     0       /**< \brief dcload-serial connection */
-#define DCLOAD_TYPE_IP      1       /**< \brief dcload-ip connection */
+#define KOSLOAD_TYPE_NONE    -1      /**< \brief No kosload connection */
+#define KOSLOAD_TYPE_SER     0       /**< \brief dcload-serial connection */
+#define KOSLOAD_TYPE_IP      1       /**< \brief dcload-ip connection */
 
-/** \brief  What type of dcload connection do we have? */
-extern int dcload_type;
+/** \brief  What type of kosload connection do we have? */
+extern int kosload_type;
 
 /* \cond */
 
-/* Tests for the dcload syscall being present. */
-int syscall_dcload_detected(void);
+/* Tests for the kosload syscall being present. */
+int syscall_kosload_detected(void);
 
 /* Init func */
-void fs_dcload_init_console(void);
-void fs_dcload_init(void);
-void fs_dcload_shutdown(void);
+void fs_kosload_init_console(void);
+void fs_kosload_init(void);
+void fs_kosload_shutdown(void);
 
 /* \endcond */
 
@@ -73,4 +73,4 @@ void fs_dcload_shutdown(void);
 
 __END_DECLS
 
-#endif  /* __KOS_FS_DCLOAD_H */
+#endif  /* __KOS_FS_KOSLOAD_H */
