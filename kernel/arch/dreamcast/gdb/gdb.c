@@ -221,7 +221,7 @@ void gdb_init(void) {
     initialized = true;
     connected = false;
 
-    if(dcload_gdbpacket(NULL, 0, NULL, 0) == 0)
+    if(kosload_gdbpacket(NULL, 0, NULL, 0) == 0)
         using_dcl = 1;
     else {
         using_dcl = 0;

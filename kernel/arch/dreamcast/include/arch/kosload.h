@@ -7,26 +7,26 @@
 */
 
 /** \file    arch/kosload.h
-    \brief   Dreamcast-specific dc-load memory area.
-    \ingroup vfs_dcload
+    \brief   Dreamcast-specific kos-load memory area.
+    \ingroup vfs_kosload
 
     Describes where dc-load lives in RAM on the Dreamcast, which is all that is
     needed in order to detect the connection.  The syscall transport itself is
     in arch/dreamcast/hardware/kosload_syscalls.c.
 */
 
-#ifndef __ARCH_DCLOAD_H
-#define __ARCH_DCLOAD_H
+#ifndef __ARCH_KOSLOAD_H
+#define __ARCH_KOSLOAD_H
 
 #include <stdint.h>
 
 /** \brief  Size of the dc-load area reserved in bytes (45 KB) */
-#define DCLOAD_SIZE          (45 * 1024)
+#define KOSLOAD_SIZE          (45 * 1024)
 
 /** \brief  Base address of the dc-load area in RAM */
-#define DCLOAD_BASE_ADDR     0x8c004000
+#define KOSLOAD_BASE_ADDR     0x8c004000
 
 /** \brief  Address of the dc-load magic value in RAM */
-#define DCLOAD_MAGIC_ADDR    (DCLOAD_BASE_ADDR + 0x4)
+#define KOSLOAD_MAGIC_ADDR    (KOSLOAD_BASE_ADDR + 0x4)
 
-#endif  /* __ARCH_DCLOAD_H */
+#endif  /* __ARCH_KOSLOAD_H */
