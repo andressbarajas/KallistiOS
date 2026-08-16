@@ -1,12 +1,12 @@
 /* KallistiOS ##version##
 
-   dcload_syscalls.c
+   kosload_syscalls.c
 
    Copyright (C) 2026 Andy Barajas
 
 */
 
-#include <kos/dcload.h>
+#include <kos/kosload.h>
 
 #include <dc/fifo.h>
 #include <dc/memory.h>

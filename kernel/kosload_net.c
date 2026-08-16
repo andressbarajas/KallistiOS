@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/dcload_net.c
+   kernel/kosload_net.c
 
    Copyright (C) 2007, 2008, 2012, 2013, 2015 Lawrence Sebald
 
@@ -34,10 +34,10 @@
 #include <kos/dbglog.h>
 #include <kos/regfield.h>
 
-#include <kos/dcload.h>
-#include <kos/fs_dcload.h>
+#include <kos/kosload.h>
+#include <kos/fs_kosload.h>
 
-/* Default backend, defined in dcload_syscall.c */
+/* Default transport, defined per-arch in kosload_syscalls.c */
 int dcload_syscall_native(dcload_cmd_t cmd, void *p1, void *p2, void *p3);
 
 #define DCLOAD_PORT 53535

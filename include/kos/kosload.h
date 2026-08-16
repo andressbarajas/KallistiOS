@@ -1,10 +1,10 @@
 /* KallistiOS ##version##
 
-   kos/dcload.h
+   kos/kosload.h
    Copyright (C) 2025 Donald Haase
 */
 
-/** \file      kos/dcload.h
+/** \file      kos/kosload.h
     \brief     Functions to access the system calls provided by dcload.
     \ingroup   dcload_syscalls
 

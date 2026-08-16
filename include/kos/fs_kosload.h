@@ -1,11 +1,11 @@
 /* KallistiOS ##version##
 
-   include/kos/fs_dcload.h
+   include/kos/fs_kosload.h
    (c)2002 Andrew Kieschnick
 
 */
 
-/** \file    kos/fs_dcload.h
+/** \file    kos/fs_kosload.h
     \brief   Implementation of dcload "filesystem".
     \ingroup vfs_dcload
 
@@ -28,7 +28,7 @@ __BEGIN_DECLS
 #include <kos/fs.h>
 #include <kos/dbgio.h>
 
-#include <arch/dcload.h>
+#include <arch/kosload.h>
 
 /** \defgroup vfs_dcload    PC
     \brief                  VFS driver for accessing a remote PC via

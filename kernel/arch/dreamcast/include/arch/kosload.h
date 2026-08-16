@@ -1,18 +1,18 @@
 /* KallistiOS ##version##
 
-   arch/dreamcast/include/arch/dcload.h
+   arch/dreamcast/include/arch/kosload.h
    Copyright (C) 2025 Donald Haase
    Copyright (C) 2026 Andy Barajas
 
 */
 
-/** \file    arch/dcload.h
+/** \file    arch/kosload.h
     \brief   Dreamcast-specific dc-load memory area.
     \ingroup vfs_dcload
 
     Describes where dc-load lives in RAM on the Dreamcast, which is all that is
     needed in order to detect the connection.  The syscall transport itself is
-    in arch/dreamcast/hardware/dcload_syscalls.c.
+    in arch/dreamcast/hardware/kosload_syscalls.c.
 */
 
 #ifndef __ARCH_DCLOAD_H
