@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   dcload_syscalls_net.c
+   kernel/dcload_net.c
 
    Copyright (C) 2007, 2008, 2012, 2013, 2015 Lawrence Sebald
 
@@ -34,8 +34,8 @@
 #include <kos/dbglog.h>
 #include <kos/regfield.h>
 
-#include <dc/dcload.h>
-#include <dc/fs_dcload.h>
+#include <kos/dcload.h>
+#include <kos/fs_dcload.h>
 
 /* Default backend, defined in dcload_syscall.c */
 int dcload_syscall_native(dcload_cmd_t cmd, void *p1, void *p2, void *p3);

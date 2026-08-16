@@ -1,10 +1,10 @@
 /* KallistiOS ##version##
 
-   dc/dcload.h
+   kos/dcload.h
    Copyright (C) 2025 Donald Haase
 */
 
-/** \file      dc/dcload.h
+/** \file      kos/dcload.h
     \brief     Functions to access the system calls provided by dcload.
     \ingroup   dcload_syscalls
 
@@ -21,8 +21,8 @@
     @{
 */
 
-#ifndef __DC_DCLOAD_H
-#define __DC_DCLOAD_H
+#ifndef __KOS_DCLOAD_H
+#define __KOS_DCLOAD_H
 
 #include <sys/cdefs.h>
 __BEGIN_DECLS
@@ -116,4 +116,4 @@ int dcload_rewinddir(uint32_t hnd);
 
 __END_DECLS
 
-#endif /* __DC_DCLOAD_H */
+#endif /* __KOS_DCLOAD_H */

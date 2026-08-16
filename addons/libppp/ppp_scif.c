@@ -10,7 +10,7 @@
 #include <kos/dbglog.h>
 
 #include <dc/scif.h>
-#include <dc/fs_dcload.h>
+#include <kos/fs_dcload.h>
 
 #include <ppp/ppp.h>
 

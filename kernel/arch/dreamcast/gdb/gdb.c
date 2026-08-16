@@ -21,7 +21,7 @@
 #include <arch/arch.h>
 #include <arch/gdb.h>
 
-#include <dc/dcload.h>
+#include <kos/dcload.h>
 #include <dc/scif.h>
 
 #include <stdio.h>
