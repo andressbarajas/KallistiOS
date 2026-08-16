@@ -6,7 +6,7 @@
 
 */
 
-#include <dc/dcload.h>
+#include <kos/dcload.h>
 
 #include <dc/fifo.h>
 #include <dc/memory.h>

@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   kernel/arch/dreamcast/fs/fs_dcload.c
+   kernel/fs/fs_dcload.c
    Copyright (C) 2002 Andrew Kieschnick
    Copyright (C) 2004 Megan Potter
    Copyright (C) 2012 Lawrence Sebald
@@ -18,8 +18,8 @@ printf goes to the dc-tool console
 
 */
 
-#include <dc/dcload.h>
-#include <dc/fs_dcload.h>
+#include <kos/dcload.h>
+#include <kos/fs_dcload.h>
 #include <kos/dbgio.h>
 #include <kos/dbglog.h>
 #include <kos/fs.h>
