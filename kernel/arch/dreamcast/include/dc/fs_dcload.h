@@ -28,6 +28,8 @@ __BEGIN_DECLS
 #include <kos/fs.h>
 #include <kos/dbgio.h>
 
+#include <arch/dcload.h>
+
 /** \defgroup vfs_dcload    PC
     \brief                  VFS driver for accessing a remote PC via
                             DC-Load/Tool
@@ -45,7 +47,7 @@ extern dbgio_handler_t dbgio_dcload;
 #define DCLOADMAGICVALUE 0xdeadbeef
 
 /** \brief  The address of the dcload magic value */
-#define DCLOADMAGICADDR (unsigned int *)0x8c004004
+#define DCLOADMAGICADDR (unsigned int *)DCLOAD_MAGIC_ADDR
 
 /* Are we using dc-load-serial or dc-load-ip? */
 #define DCLOAD_TYPE_NONE    -1      /**< \brief No dcload connection */
