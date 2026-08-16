@@ -10,9 +10,12 @@
     \brief   Dreamcast-specific kos-load memory area.
     \ingroup vfs_kosload
 
-    Describes where dc-load lives in RAM on the Dreamcast, which is all that is
-    needed in order to detect the connection.  The syscall transport itself is
-    in arch/dreamcast/hardware/kosload_syscalls.c.
+    Describes where dc-load lives in RAM on the Dreamcast, which is all the
+    portable driver needs in order to detect the connection.  The native syscall
+    transport itself is in arch/dreamcast/hardware/kosload_syscalls.c.
+
+    Included automatically by kernel/kosload.c via the arch-specific include
+    path; do not include directly.
 */
 
 #ifndef __ARCH_KOSLOAD_H
