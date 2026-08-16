@@ -21,7 +21,7 @@
    framing characters(#, $) on the wire.
 */
 
-#include <kos/dcload.h>
+#include <kos/kosload.h>
 #include <dc/scif.h>
 
 #include <stdarg.h>

@@ -8,8 +8,8 @@
 #include <kos/fs_random.h>
 #include <kos/fs_romdisk.h>
 #include <kos/fs_ramdisk.h>
-#include <kos/dcload.h>
-#include <kos/fs_dcload.h>
+#include <kos/kosload.h>
+#include <kos/fs_kosload.h>
 #include <kos/irq.h>
 #include <kos/library.h>
 #include <kos/net.h>
