@@ -1,11 +1,11 @@
 /* KallistiOS ##version##
 
-   kernel/arch/dreamcast/include/dc/fs_dcload.h
+   include/kos/fs_dcload.h
    (c)2002 Andrew Kieschnick
 
 */
 
-/** \file    dc/fs_dcload.h
+/** \file    kos/fs_dcload.h
     \brief   Implementation of dcload "filesystem".
     \ingroup vfs_dcload
 
@@ -16,8 +16,8 @@
     \author Andrew Kieschnick
 */
 
-#ifndef __DC_FS_DCLOAD_H
-#define __DC_FS_DCLOAD_H
+#ifndef __KOS_FS_DCLOAD_H
+#define __KOS_FS_DCLOAD_H
 
 /* Definitions for the "dcload" file system */
 
@@ -73,4 +73,4 @@ void fs_dcload_shutdown(void);
 
 __END_DECLS
 
-#endif  /* __DC_FS_DCLOAD_H */
+#endif  /* __KOS_FS_DCLOAD_H */

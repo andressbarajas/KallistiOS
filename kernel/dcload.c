@@ -1,6 +1,6 @@
 /* KallistiOS ##version##
 
-   dcload.c
+   kernel/dcload.c
 
    Copyright (C) 2025 Donald Haase
 
@@ -8,7 +8,7 @@
 
 #include <stdio.h>
 
-#include <dc/dcload.h>
+#include <kos/dcload.h>
 
 /* Default backend, defined in dcload_syscall.c */
 int dcload_syscall_native(dcload_cmd_t cmd, void *p1, void *p2, void *p3);
