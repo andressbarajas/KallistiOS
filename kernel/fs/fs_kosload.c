@@ -5,17 +5,18 @@
    Copyright (C) 2004 Megan Potter
    Copyright (C) 2012 Lawrence Sebald
    Copyright (C) 2025 Donald Haase
+   Copyright (C) 2026 Andy Barajas
 
 */
 
 /*
+   VFS driver for the dc-tool host filesystem (formerly dc-load/fs_dcload).
 
-This is a rewrite of Megan Potter's fs_serconsole to use the kosload / dc-tool
-fileserver and console.
+   printf goes to the dc-tool console
+   /pc corresponds to / on the system running dc-tool
 
-printf goes to the dc-tool console
-/pc corresponds to / on the system running dc-tool
-
+   The low-level loader syscall driver lives in kernel/kosload.c; this file
+   only implements the /pc VFS on top of it and is fully portable.
 */
 
 #include <kos/kosload.h>
@@ -25,15 +26,18 @@ printf goes to the dc-tool console
 #include <kos/fs.h>
 #include <kos/init.h>
 #include <kos/mutex.h>
-#include <kos/rwsem.h>
 
 #include <errno.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
-#include <sys/queue.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+/* ---- VFS handler --------------------------------------------------------- */
 
 typedef struct kl_obj {
     int    hnd;
@@ -42,18 +46,6 @@ typedef struct kl_obj {
 } kl_obj_t;
 
 static mutex_t mutex = MUTEX_INITIALIZER;
-
-int kosload_write_buffer(const uint8_t *data, int len, int xlat) {
-    (void)xlat;
-
-    kosload_write(STDOUT_FILENO, data, len);
-
-    return len;
-}
-
-int kosload_read_buffer(uint8_t *data, int len) {
-    return kosload_read(STDIN_FILENO, data, len);
-}
 
 static void *fs_kosload_open(vfs_handler_t *vfs, const char *fn, int mode) {
     kl_obj_t *entry;
@@ -403,8 +395,21 @@ static vfs_handler_t vh = {
     NULL                /* fstat */
 };
 
-/* We have to provide a minimal interface in case kosload usage is
-   disabled through init flags. */
+/* ---- Console (dbgio) ----------------------------------------------------- */
+
+static int fs_kosload_write_buffer(const uint8_t *data, int len, int xlat) {
+    (void)xlat;
+
+    kosload_write(STDOUT_FILENO, data, len);
+
+    return len;
+}
+
+static int fs_kosload_read_buffer(uint8_t *data, int len) {
+    return kosload_read(STDIN_FILENO, data, len);
+}
+
+/* Minimal stub so the dbgio handler table entry is valid before init. */
 static int never_detected(void) {
     return 0;
 }
@@ -413,14 +418,6 @@ dbgio_handler_t dbgio_kosload = {
     .name = "fs_kosload_uninit",
     .detected = never_detected
 };
-
-int syscall_kosload_detected(void) {
-    /* Check for kosload */
-    if(*KOSLOADMAGICADDR == KOSLOADMAGICVALUE)
-        return 1;
-    else
-        return 0;
-}
 
 static int *kosload_wrkmem = NULL;
 static const char *dbgio_kosload_name = "fs_kosload";
@@ -433,8 +430,8 @@ void fs_kosload_init_console(void) {
     memcpy(&dbgio_kosload, &dbgio_null, sizeof(dbgio_kosload));
     dbgio_kosload.name = dbgio_kosload_name;
     dbgio_kosload.detected = syscall_kosload_detected;
-    dbgio_kosload.write_buffer = kosload_write_buffer;
-    dbgio_kosload.read_buffer = kosload_read_buffer;
+    dbgio_kosload.write_buffer = fs_kosload_write_buffer;
+    dbgio_kosload.read_buffer = fs_kosload_read_buffer;
 
     /* We actually need to detect here to make sure we're on
        kosload-serial, or scif_init must not proceed. */
@@ -458,6 +455,8 @@ void fs_kosload_init_console(void) {
     }
 }
 
+/* ---- Initialization ------------------------------------------------------ */
+
 /* Call fs_kosload_init_console() before calling fs_kosload_init() */
 void fs_kosload_init(void) {
     /* This was already done in init_console. */
@@ -477,6 +476,7 @@ void fs_kosload_shutdown(void) {
     if(kosload_wrkmem) {
         kosload_assignwrkmem(0);
         free(kosload_wrkmem);
+        kosload_wrkmem = NULL;
     }
 
     nmmgr_handler_remove(&vh.nmmgr);
