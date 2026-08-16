@@ -121,6 +121,15 @@ __BEGIN_DECLS
 static const uint32_t INIT_OCRAM __depr("INIT_OCRAM has been removed. Use dcache_toggle_ocram().") = 0;
 #define INIT_NO_KOSLOAD     0x20000000  /**< \brief Disable kos-load */
 
+/** \brief  \deprecated Use \ref INIT_NO_KOSLOAD.
+
+    dc-load has been renamed to kos-load; this alias keeps existing
+    KOS_INIT_FLAGS() usage building.  It has to be a macro rather than a
+    deprecated constant because the init-flag machinery expands it in
+    file-scope initializers, which require a constant expression.
+*/
+#define INIT_NO_DCLOAD      INIT_NO_KOSLOAD
+
 /** @} */
 
 __END_DECLS
