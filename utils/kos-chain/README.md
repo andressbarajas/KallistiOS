@@ -28,6 +28,9 @@ toolchain is optional and only necessary for compiling custom AICA drivers.
 - **GameCube**: `powerpc-eabi` toolchain, the cross-compiler toolchain targeting
 the **IBM Gekko PowerPC (PPC) CPU** in the Nintendo GameCube. GameCube support
 is coming soon to KallistiOS.
+- **playstation2**: `mips64r5900el-ps2-elf` toolchain, targeting the **Emotion
+Engine (EE)**, the MIPS R5900 primary CPU of the Sony PlayStation 2. This
+toolchain is required for PlayStation 2 development.
 
 ## Getting started
 
