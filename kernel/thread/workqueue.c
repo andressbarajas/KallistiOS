@@ -128,8 +128,9 @@ void workqueue_cancel(workqueue_t *wq, workqueue_job_t *job) {
         }
     }
 
-    if(wq->curr_job == job) {
-        /* The job's callback is being executed. Wait until it's done. */
+    if(wq->curr_job == job && !wq->quit) {
+        /* The job's callback is being executed. Wait until it's done, unless
+           we are shutting down: do not block on a queue that is going away. */
         cond_wait(&wq->cond, &wq->lock);
     }
 
@@ -139,11 +140,19 @@ void workqueue_cancel(workqueue_t *wq, workqueue_job_t *job) {
 }
 
 void workqueue_kill(workqueue_t *wq) {
-    if(!wq->quit) {
-        wq->quit = true;
-        cond_signal(&wq->cond);
-        thd_join(wq->thd, NULL);
+    mutex_lock(&wq->lock);
+
+    if(wq->quit) {
+        /* Already killed */
+        mutex_unlock(&wq->lock);
+        return;
     }
+
+    wq->quit = true;
+    cond_signal(&wq->cond);
+    mutex_unlock(&wq->lock);
+
+    thd_join(wq->thd, NULL);
 }
 
 void workqueue_destroy(workqueue_t *wq) {
