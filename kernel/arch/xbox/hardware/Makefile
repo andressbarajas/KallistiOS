@@ -7,6 +7,9 @@
 # MCPX legacy block
 OBJS = rtc.o
 
+# MCPX SMBus host and the Xbox System Management Controller
+OBJS += smbus.o smc.o
+
 # Native kos-load syscall transport
 OBJS += kosload_syscalls.o
 

@@ -16,4 +16,6 @@
 
 #include <kos/fs_kosload.h>
 
+#include <xbox/smc.h>
+
 #endif /* __ARCH_XBOX_KOS_H */

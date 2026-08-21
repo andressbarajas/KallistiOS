@@ -1,0 +1,6 @@
+xbox_smc_tray_state
+xbox_smc_av_pack
+xbox_smc_cpu_temperature
+xbox_smc_board_temperature
+xbox_smc_error_code
+xbox_smc_version
