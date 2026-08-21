@@ -1,0 +1,31 @@
+# KallistiOS ##version##
+#
+# Common rules for Xbox threading examples.
+#
+# The linker now emits the shipping artifact directly: xbox.ld produces the
+# ELF that xbox-load-ip uploads and that elf2xbe converts for native boot.
+
+KOS_CFLAGS += -Werror
+
+all: rm-images $(TARGET)
+all_retail: all
+
+include $(KOS_BASE)/Makefile.rules
+
+clean: rm-images
+	-rm -f $(OBJS)
+
+rm-images:
+	-rm -f $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(LINKER) -o $@ $(OBJS) $(EXAMPLE_LDFLAGS) $(EXAMPLE_LIBS)
+
+run: $(TARGET)
+	$(KOS_LOADER) $(TARGET)
+
+dist: $(TARGET)
+	-rm -f $(OBJS)
+	$(KOS_STRIP) $(TARGET)
+
+.PHONY: all all_retail clean rm-images run dist
