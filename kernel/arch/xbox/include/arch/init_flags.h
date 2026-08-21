@@ -43,7 +43,11 @@ __BEGIN_DECLS
 #define KOS_INIT_FLAGS_ARCH(flags) \
     KOS_INIT_FLAG_NONE(flags, INIT_NO_KOSLOAD, kosload_init); \
     KOS_INIT_FLAG_NONE(flags, INIT_NO_KOSLOAD, fs_kosload_init_console); \
-    KOS_INIT_FLAG_NONE(flags, INIT_NO_KOSLOAD, fs_kosload_shutdown)
+    KOS_INIT_FLAG_NONE(flags, INIT_NO_KOSLOAD, fs_kosload_shutdown); \
+    extern int usb_init(void); \
+    int (*usb_init_weak)(void) = \
+        ((flags) & INIT_NO_USB) ? (int (*)(void))0 : usb_init; \
+    KOS_INIT_FLAG_NONE(flags, INIT_NO_USB, usb_shutdown)
 
 
 /** \defgroup kos_init_flags_xbox Xbox-Specific Flags
@@ -61,6 +65,7 @@ __BEGIN_DECLS
 #define INIT_DEFAULT_ARCH   0
 
 #define INIT_NO_KOSLOAD     0x20000000  /**< \brief Disable kos-load */
+#define INIT_NO_USB         0x10000000  /**< \brief Disable USB host support */
 
 /** @} */
 

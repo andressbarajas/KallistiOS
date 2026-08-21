@@ -33,6 +33,7 @@
 #include <kos/nmmgr.h>
 #include <kos/rtc.h>
 #include <kos/thread.h>
+#include <xbox/usb.h>
 #include "x86.h"
 
 /* Bounds supplied by utils/ldscripts/xbox.ld. */
@@ -99,6 +100,8 @@ extern void (*fs_shutdown_weak)(void);
 extern void (*kosload_init_weak)(void);
 extern void (*library_init_weak)(void);
 extern void (*library_shutdown_weak)(void);
+extern int (*usb_init_weak)(void) __weak_symbol;
+extern void (*usb_shutdown_weak)(void) __weak_symbol;
 
 /* Register the loader-backed /pc filesystem only after nmmgr is available. */
 void kosload_init(void) {
@@ -210,10 +213,20 @@ static int xbox_auto_init(void) {
     if(__kos_init_flags & INIT_IRQ)
         irq_enable();
 
+    /*
+     * USB enumeration performs timed control transfers and therefore starts
+     * only after the scheduler and its timer interrupt are live. Failure is
+     * non-fatal so a title can still run and report diagnostics.
+     */
+    if((__kos_init_flags & INIT_IRQ) && usb_init_weak &&
+       (*usb_init_weak)() != 0)
+        dbgio_write_str("KOS Xbox warning: USB initialization failed\n");
+
     return 0;
 }
 
 static void xbox_auto_shutdown(void) {
+    KOS_INIT_FLAG_CALL(usb_shutdown);
     KOS_INIT_FLAG_CALL(library_shutdown);
     KOS_INIT_FLAG_CALL(fs_kosload_shutdown);
     KOS_INIT_FLAG_CALL(fs_rnd_shutdown);

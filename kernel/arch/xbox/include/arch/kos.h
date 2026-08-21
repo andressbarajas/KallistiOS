@@ -17,5 +17,7 @@
 #include <kos/fs_kosload.h>
 
 #include <xbox/smc.h>
+#include <xbox/usb.h>
+#include <xbox/usb/controller.h>
 
 #endif /* __ARCH_XBOX_KOS_H */
