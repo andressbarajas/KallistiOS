@@ -1,0 +1,88 @@
+Original Xbox port status
+=========================
+
+The original Xbox port is experimental and is not ready for general use. This
+file describes the xbox/native-bringup branch. External probes and uncommitted
+experiments are not part of the port.
+
+Implemented
+-----------
+
+The branch provides an i686-pc-xbox Binutils, GCC, and Newlib toolchain
+targeting ELF; an ELF linker script; KOS startup and shutdown; x86 descriptor
+tables and interrupt handling; a PIT scheduler timer; stack handling; native
+segment-relative compiler TLS; and integer, FPU, and SSE thread context
+switching. KOS, C11, and POSIX threading interfaces are available.
+
+Hardware support includes the two MCPX OHCI controllers, external USB hubs,
+Xbox Input Device gamepads, hotplug, the MCPX real-time clock, the SMBus host,
+and a restricted SMC status interface. The shared KOSLoad code supplies debug
+I/O, the host filesystem, and loader exit support.
+
+Examples under examples/xbox exercise threading, the RTC, and SMC status.
+Controller testing uses the external interactive hardware tests.
+
+Limitations
+-----------
+
+KOS relies on the memory mappings established by the Xbox kernel and does not
+discover the complete physical memory map. There are no GPU, audio, storage,
+or network drivers in this branch.
+
+The normal build produces the ELF the loader uploads directly; the linker
+emits the shipping artifact with no objcopy stage. Native XBE packaging is
+performed by kos-tool's elf2xbe and is not integrated into the KOS build.
+
+Thread-local storage is real ELF static TLS (i386 variant II). Each thread
+owns a .tdata/.tbss block below its thread pointer, and %gs is backed by a
+flat 4 GB GDT descriptor whose base the context switch rewrites per thread.
+libgcc's emutls is no longer involved.
+
+The shared KOSLoad implementation now tracks upstream PR #1378 ("Make load
+code agnostic") exactly: the portable driver and /pc VFS come from
+kernel/kosload.c and kernel/fs/fs_kosload.c, and this port supplies only
+arch/xbox/include/arch/kosload.h and arch/xbox/hardware/kosload_syscalls.c.
+The toolchain likewise tracks upstream PR #1504. Both must land upstream
+before this branch can be submitted.
+
+Build
+-----
+
+Install the Xbox toolchain, set KOS_CC_BASE to its parent directory, and run:
+
+    source environ.sh
+    make
+
+The target is i686-pc-xbox and the default Xbox subarchitecture is retail.
+
+Verification
+------------
+
+The branch is based on upstream commit
+c22f26c99805430e1b29ea9081929240f20cf540. The following checks pass:
+
+    clean Xbox KOS build
+    all 18 public Xbox headers compiled as C and C++
+    all 11 threading examples and loader ELF layout checks
+    RTC and SMC example builds
+    a PT_TLS program header with no __emutls_get_address reference, and
+      runtime TLS geometry cross-checked against the linker's @ntpoff basis
+    compiler_tls on a retail console: 200 threads, each seeing its own
+      .tdata template (0x5A) and zeroed .tbss, incrementing independently
+      with no cross-thread aliasing, including over-aligned (_Alignas(16)
+      and _Alignas(32)) thread-locals
+    general and pthread_general on a retail console, exercising the enlarged
+      irq_context_t (now 592 bytes, FXSAVE image at offset 0x50) across the
+      KOS and POSIX threading paths
+
+The compiler_tls run covers the three ways the TLS work could plausibly break:
+a bounded %gs limit (#GP on the first thread-local access), variant I/II offset
+confusion (thread-locals reading zero or aliasing), and a stale segment
+descriptor cache (thread 1 correct, later threads wrong). The other two cover
+the context-switch change, where the FXSAVE offset is duplicated between
+irq.c's static assertions and both thdswitch.S and irqentry.S.
+
+Still outstanding: the remaining eight threading examples on hardware, and a
+C++ example demonstrating that arch_main()'s .ctors walk runs static
+constructors. A successful cross-build is not evidence of correct runtime
+behavior.
