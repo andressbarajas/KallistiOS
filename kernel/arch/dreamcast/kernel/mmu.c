@@ -222,8 +222,6 @@ static void mmu_page_map_single(mmucontext_t *context,
     mmupage_t   *page;
     int     top, bot, i;
 
-    (void)dirty;
-
     /* Get back the virtual address */
     virtpage = virtpage << MMU_IND_BITS;
 
@@ -270,7 +268,7 @@ static void mmu_page_map_single(mmucontext_t *context,
             break;
     }
 
-    page->dirty = 1;    /* XXX Initial-write exception not called */
+    page->dirty = dirty;
     page->blank = 0;
     page->shared = share;
     page->valid = 1;
