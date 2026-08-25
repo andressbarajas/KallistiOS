@@ -220,6 +220,22 @@ static void mmu_page_uninstall(unsigned int virtpage)
         = virtpage << PAGESIZE_BITS;
 }
 
+void mmu_page_unmap(mmucontext_t *context, int virtpage, int count)
+{
+    mmupage_t *page;
+
+    while(count) {
+        page = map_virt(context, virtpage);
+        if(page) {
+            page->valid = 0;
+            mmu_page_uninstall(virtpage);
+        }
+
+        virtpage++;
+        count--;
+    }
+}
+
 /* Set the given virtual page to map to the given physical page; implies
    turning on the "valid" bit. */
 static void mmu_page_map_single(mmucontext_t *context,
