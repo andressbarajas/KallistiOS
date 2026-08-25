@@ -255,16 +255,12 @@ static void mmu_page_map_single(mmucontext_t *context,
             page->cache = 0;
             break;
         case MMU_CACHE_BACK:
-            page->cache = 0;
+            page->cache = 1;
             page->wthru = 0;
-            break;    /* XXX tmp */
-        case MMU_CACHE_WT:
-            page->cache = 0;
-            page->wthru = 1;
             break;
-        default:
-            page->cache = 0;
-            page->wthru = 0;
+        case MMU_CACHE_WT:
+            page->cache = 1;
+            page->wthru = 1;
             break;
     }
 
