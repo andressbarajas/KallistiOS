@@ -284,7 +284,7 @@ static pvr_ptr_t pvr_get_frame_buffer(bool back) {
     /* The front buffer may not have been fully rendered or submitted to the
        video hardware yet. In case this has yet to happen, we want the second
        view target, aka. the one not currently being displayed. */
-    idx = pvr_state.view_target ^ pvr_state.render_completed ^ back;
+    idx = pvr_state.view_target ^ (pvr_state.render_busy | pvr_state.render_completed) ^ back;
 
     addr = pvr_state.frame_buffers[idx].frame & (PVR_RAM_SIZE - 1);
 
